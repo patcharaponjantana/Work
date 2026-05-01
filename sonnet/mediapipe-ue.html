@@ -1,0 +1,1986 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>MediaPipe → UE Soulslike Tutorial</title>
+<script src="mediapipe-ue.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0d0f17;--surface:#13161f;--surface2:#1a1e2e;--surface3:#202538;
+  --border:#252a3d;--text:#dde4f0;--muted:#7b879e;--dim:#4a5268;
+  --accent:#5b9cf6;--accent-dim:rgba(91,156,246,.14);--accent-hi:rgba(91,156,246,.22);
+  --green:#4ade80;--amber:#fbbf24;--red:#f87171;--purple:#a78bfa;--orange:#fb923c;
+  --font:system-ui,-apple-system,'Segoe UI',sans-serif;
+  --mono:ui-monospace,'Cascadia Code','Fira Code',monospace;
+}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--font);font-size:15px;line-height:1.55}
+
+/* ── Header ─────────────────────────────────────────────────── */
+.hdr{
+  position:sticky;top:0;z-index:20;
+  height:50px;padding:0 20px;
+  background:var(--surface);
+  border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:18px;
+}
+.hdr-title{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
+.tab-bar{display:flex;gap:2px;overflow-x:auto;scrollbar-width:none}
+.tab-bar::-webkit-scrollbar{display:none}
+.tab{
+  padding:5px 14px;border:none;background:transparent;
+  color:var(--muted);font:inherit;font-size:13px;cursor:pointer;
+  border-radius:6px;white-space:nowrap;
+  transition:color 120ms,background 120ms;
+}
+.tab:hover{color:var(--text);background:rgba(255,255,255,.05)}
+.tab.active{color:var(--accent);background:var(--accent-dim)}
+
+/* ── Panels ──────────────────────────────────────────────────── */
+.panels{height:calc(100vh - 50px);overflow:hidden;position:relative}
+.panel{display:none;height:100%;overflow-y:auto;padding:22px 24px;flex-direction:column;gap:18px}
+.panel.active{display:flex}
+
+/* ── Typography ──────────────────────────────────────────────── */
+.pt{font-size:19px;font-weight:600}
+.ps{font-size:13px;color:var(--muted);margin-top:2px;max-width:680px}
+.body-text{font-size:14px;color:var(--muted);max-width:680px;line-height:1.65}
+.body-text strong{color:var(--text)}
+
+/* ── Cards ───────────────────────────────────────────────────── */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px}
+.card-title{font-size:13px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px}
+
+/* ── Grid ────────────────────────────────────────────────────── */
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
+@media(max-width:720px){.g2,.g3{grid-template-columns:1fr}}
+
+/* ── Controls ────────────────────────────────────────────────── */
+.ctrl-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px}
+.ctrl-label{font-size:12px;color:var(--muted);min-width:100px;white-space:nowrap}
+.slider{flex:1;min-width:100px;accent-color:var(--accent);cursor:pointer}
+.val{font-family:var(--mono);font-size:12px;background:var(--surface2);border-radius:4px;padding:2px 8px;min-width:54px;text-align:right;color:var(--accent)}
+.btn{
+  padding:6px 14px;border-radius:6px;
+  border:1px solid var(--border);background:var(--surface2);
+  color:var(--text);font:inherit;font-size:13px;cursor:pointer;
+  transition:background 100ms,border-color 100ms;white-space:nowrap;
+}
+.btn:hover{background:rgba(255,255,255,.07);border-color:rgba(255,255,255,.15)}
+.btn.on{border-color:var(--accent);background:var(--accent-dim);color:var(--accent)}
+.btn-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+
+/* ── Readouts ────────────────────────────────────────────────── */
+.readouts{display:flex;gap:10px;flex-wrap:wrap}
+.ro{background:var(--surface2);border-radius:8px;padding:10px 14px;min-width:100px}
+.ro-val{font-family:var(--mono);font-size:20px;font-weight:700;color:var(--accent)}
+.ro-label{font-size:11px;color:var(--muted);margin-top:1px}
+
+/* ── SVG hosts ───────────────────────────────────────────────── */
+.svg-host{width:100%;height:auto;display:block}
+.fig-wrap{border:1px solid var(--border);border-radius:8px;background:color-mix(in srgb,var(--surface2) 80%,#000);padding:12px;overflow:hidden}
+.fig-label{font-size:11px;color:var(--muted);margin-bottom:6px;font-weight:600;text-transform:uppercase;letter-spacing:.05em}
+
+/* ── Pipeline ────────────────────────────────────────────────── */
+.pipe-flow{display:flex;align-items:center;gap:0;overflow-x:auto;padding-bottom:4px;flex-wrap:nowrap}
+.pipe-step{
+  flex-shrink:0;cursor:pointer;
+  background:var(--surface2);border:1px solid var(--border);
+  border-radius:8px;padding:14px 16px 12px;text-align:center;
+  min-width:115px;transition:border-color 120ms,background 120ms;
+}
+.pipe-step:hover,.pipe-step.sel{border-color:var(--accent);background:var(--accent-dim)}
+.pipe-step svg{display:block;margin:0 auto 8px;opacity:.75}
+.pipe-name{font-size:12px;font-weight:600}
+.pipe-sub{font-size:10px;color:var(--muted);margin-top:2px;font-family:var(--mono)}
+.pipe-arrow{flex-shrink:0;padding:0 8px;color:var(--dim);font-size:20px;line-height:1}
+.pipe-detail{background:var(--surface2);border:1px solid var(--accent-dim);border-radius:8px;padding:16px;font-size:14px;line-height:1.65;color:var(--text);min-height:80px}
+.pipe-detail strong{color:var(--accent)}
+.pipe-detail code{font-family:var(--mono);font-size:12px;background:var(--surface3);border-radius:3px;padding:1px 5px;color:var(--purple)}
+
+/* ── Landmark Explorer ───────────────────────────────────────── */
+.lm-wrap{display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap}
+.lm-figure{flex-shrink:0}
+.lm-controls{flex:1;min-width:240px}
+.lm-chip{fill:var(--accent-hi);stroke:var(--accent);stroke-width:1.5;cursor:pointer;transition:r 80ms}
+.lm-chip.sel{fill:var(--accent);r:7}
+.lm-bone{stroke:var(--dim);stroke-width:2.5;fill:none}
+.lm-label-text{font-size:9px;fill:var(--muted);pointer-events:none;font-family:var(--mono)}
+
+/* ── Coord Space ─────────────────────────────────────────────── */
+.axis-diagram{display:flex;gap:12px;flex-wrap:wrap}
+.axis-box{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px;text-align:center;flex:1;min-width:180px}
+.axis-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin-bottom:8px}
+
+/* ── Code blocks ─────────────────────────────────────────────── */
+.code-wrap{position:relative;border-radius:8px;overflow:hidden;border:1px solid var(--border)}
+.code-header{background:var(--surface2);padding:8px 14px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border)}
+.code-lang{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+.copy-btn{padding:3px 10px;font-size:11px;background:var(--surface3);border:1px solid var(--border);border-radius:5px;color:var(--text);cursor:pointer;font-family:inherit;transition:background 80ms}
+.copy-btn:hover{background:var(--accent-dim);border-color:var(--accent);color:var(--accent)}
+pre.code{
+  margin:0;padding:16px;overflow-x:auto;
+  font-family:var(--mono);font-size:12.5px;line-height:1.7;
+  background:color-mix(in srgb,var(--surface2) 60%,#000);
+  tab-size:4;
+}
+/* Minimal syntax highlight via CSS classes (added by JS) */
+.k{color:#c792ea} /* keyword */
+.s{color:#c3e88d} /* string */
+.c{color:#546e7a;font-style:italic} /* comment */
+.f{color:var(--accent)} /* function */
+.n{color:#ff9cac} /* number */
+.t{color:var(--amber)} /* type/builtin */
+.p{color:var(--muted)} /* punctuation */
+
+/* ── Gesture cards ───────────────────────────────────────────── */
+.gesture-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+@media(max-width:600px){.gesture-grid{grid-template-columns:1fr}}
+.gesture-card{background:var(--surface);border:2px solid var(--border);border-radius:12px;padding:16px;transition:border-color 200ms}
+.gesture-card.triggered{border-color:var(--green);background:rgba(74,222,128,.07)}
+.gesture-name{font-size:14px;font-weight:700;margin-bottom:4px}
+.gesture-desc{font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.5}
+.gesture-status{font-family:var(--mono);font-size:12px;font-weight:700;padding:4px 10px;border-radius:5px;display:inline-block;background:var(--surface2);color:var(--dim);transition:color 200ms,background 200ms}
+.gesture-status.on{background:rgba(74,222,128,.15);color:var(--green)}
+
+/* ── Free Tools ──────────────────────────────────────────────── */
+.tool-list{display:flex;flex-direction:column;gap:10px}
+.tool-row{
+  display:flex;gap:14px;align-items:flex-start;
+  background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;
+}
+.tool-icon{flex-shrink:0;width:38px;height:38px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px;background:var(--surface2)}
+.tool-body{flex:1}
+.tool-name{font-weight:700;font-size:14px}
+.tool-desc{font-size:13px;color:var(--muted);margin-top:2px;line-height:1.5}
+.tool-meta{display:flex;gap:8px;margin-top:6px;flex-wrap:wrap}
+.badge{font-size:11px;padding:2px 8px;border-radius:4px;font-weight:600;font-family:var(--mono)}
+.badge-free{background:rgba(74,222,128,.12);color:var(--green);border:1px solid rgba(74,222,128,.3)}
+.badge-royalty{background:rgba(251,191,36,.1);color:var(--amber);border:1px solid rgba(251,191,36,.3)}
+.badge-ue{background:var(--accent-dim);color:var(--accent);border:1px solid rgba(91,156,246,.3)}
+.tool-link{font-size:12px;color:var(--accent);text-decoration:none;margin-top:4px;display:inline-block}
+.tool-link:hover{text-decoration:underline}
+
+/* ── Joint angle SVG canvas ──────────────────────────────────── */
+.drag-canvas{cursor:crosshair;touch-action:none}
+.drag-point{cursor:grab;fill:var(--accent);stroke:var(--surface2);stroke-width:2}
+.drag-point:active{cursor:grabbing}
+
+/* ── 3D Skeleton Lab ─────────────────────────────────────────── */
+.skel-layout{display:grid;grid-template-columns:1fr 340px;gap:16px;height:calc(100vh - 180px);min-height:500px}
+@media(max-width:900px){.skel-layout{grid-template-columns:1fr;height:auto}}
+.skel-canvas-wrap{position:relative;border:1px solid var(--border);border-radius:10px;background:color-mix(in srgb,var(--surface2) 70%,#000);overflow:hidden;user-select:none}
+#skel3d{display:block;width:100%;height:100%;cursor:grab}
+#skel3d:active{cursor:grabbing}
+.skel-hint{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);font-size:11px;color:var(--muted);background:rgba(0,0,0,.45);padding:3px 10px;border-radius:4px;pointer-events:none;white-space:nowrap}
+.skel-right{display:flex;flex-direction:column;gap:12px;overflow-y:auto}
+.bone-angle-table{width:100%;border-collapse:collapse;font-size:12px}
+.bone-angle-table th{text-align:left;padding:5px 8px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);border-bottom:1px solid var(--border)}
+.bone-angle-table td{padding:5px 8px;border-bottom:1px solid rgba(255,255,255,.04)}
+.bone-angle-table tr:hover td{background:var(--accent-dim)}
+.bone-angle-table tr.sel-bone td{background:var(--accent-hi);color:var(--text)}
+.bat-angle{font-family:var(--mono);color:var(--accent);text-align:right}
+.bat-rotator{font-family:var(--mono);font-size:10px;color:var(--muted)}
+.formula-box{background:var(--surface3);border-radius:6px;padding:12px;font-size:12px;line-height:1.7;font-family:var(--mono);color:var(--muted)}
+.formula-box .fl{color:var(--accent)}
+.formula-box .fv{color:var(--amber)}
+.formula-box .fc{color:#546e7a;font-style:italic}
+.joint-sliders{display:flex;flex-direction:column;gap:4px}
+</style>
+</head>
+<body>
+
+<header class="hdr">
+  <span class="hdr-title">MediaPipe → UE Soulslike</span>
+  <nav class="tab-bar" aria-label="Sections">
+    <button class="tab" data-tab="pipeline">Pipeline</button>
+    <button class="tab" data-tab="landmarks">Landmarks</button>
+    <button class="tab" data-tab="coords">Coord Space</button>
+    <button class="tab" data-tab="rotations">Rotations</button>
+    <button class="tab" data-tab="gestures">Gestures</button>
+    <button class="tab" data-tab="code">Python Code</button>
+    <button class="tab" data-tab="tools">Free Tools</button>
+    <button class="tab" data-tab="skellab">3D Skeleton Lab</button>
+  </nav>
+</header>
+
+<div class="panels">
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<!-- TAB 1 — Pipeline                                           -->
+<!-- ══════════════════════════════════════════════════════════ -->
+<section class="panel" data-panel="pipeline" id="panel-pipeline">
+  <div>
+    <div class="pt">Full-Stack Soulslike Pipeline</div>
+    <div class="ps">Click each stage to see what it does, the key code, and the latency budget. Total round-trip target: &lt; 50 ms.</div>
+  </div>
+
+  <div class="pipe-flow" id="pipe-flow"></div>
+  <div class="pipe-detail" id="pipe-detail">Select a stage above to see details.</div>
+
+  <div class="g3">
+    <div class="card">
+      <div class="card-title">Why UDP?</div>
+      <div class="body-text">TCP guarantees delivery but pauses on loss — fatal for 60 fps control. UDP drops stale frames silently. One lost landmark packet means one frame of drift, which the EMA smoother hides completely.</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Why MediaPipe?</div>
+      <div class="body-text">Google's BlazePose runs at 30–60 fps on a laptop CPU with no GPU required, outputs <strong>33 normalized 3-D landmarks</strong>, and is free under Apache 2.0. It outperforms OpenPose on speed for real-time games.</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Soulslike feel</div>
+      <div class="body-text">Soulslike games demand <strong>precise, deliberate inputs</strong>. Map large, intentional body gestures (raise arm, lean, crouch) rather than subtle finger movements to minimize false triggers and match the game's punishing design philosophy.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<!-- TAB 2 — Landmark Explorer                                  -->
+<!-- ══════════════════════════════════════════════════════════ -->
+<section class="panel" data-panel="landmarks" id="panel-landmarks">
+  <div>
+    <div class="pt">Landmark Explorer</div>
+    <div class="ps">Click any joint on the figure to select it, then drag the sliders to see raw MediaPipe values and their converted UE world-space positions in real time.</div>
+  </div>
+
+  <div class="lm-wrap">
+    <div class="lm-figure fig-wrap" style="padding:8px">
+      <div class="fig-label">BlazePose — 33 landmarks</div>
+      <svg id="lm-svg" width="220" height="380" viewBox="0 0 220 380"></svg>
+    </div>
+
+    <div class="lm-controls">
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-title">Selected: <span id="lm-name" style="color:var(--accent);font-family:var(--mono)">—</span></div>
+        <div class="ctrl-row">
+          <span class="ctrl-label">x (left→right)</span>
+          <input class="slider" id="lm-x" type="range" min="0" max="1" step="0.01" value="0.5" disabled/>
+          <span class="val" id="lm-x-v">0.50</span>
+        </div>
+        <div class="ctrl-row">
+          <span class="ctrl-label">y (top→bottom)</span>
+          <input class="slider" id="lm-y" type="range" min="0" max="1" step="0.01" value="0.5" disabled/>
+          <span class="val" id="lm-y-v">0.50</span>
+        </div>
+        <div class="ctrl-row">
+          <span class="ctrl-label">z (depth)</span>
+          <input class="slider" id="lm-z" type="range" min="-0.5" max="0.5" step="0.01" value="0" disabled/>
+          <span class="val" id="lm-z-v">0.00</span>
+        </div>
+      </div>
+
+      <div class="readouts">
+        <div class="ro"><div class="ro-val" id="ue-x-val">—</div><div class="ro-label">UE X (fwd, cm)</div></div>
+        <div class="ro"><div class="ro-val" id="ue-y-val">—</div><div class="ro-label">UE Y (right, cm)</div></div>
+        <div class="ro"><div class="ro-val" id="ue-z-val">—</div><div class="ro-label">UE Z (up, cm)</div></div>
+      </div>
+
+      <div class="body-text" style="margin-top:14px">
+        <strong>How to read this:</strong> MediaPipe outputs x/y as fractions of frame size (0–1). Z is depth in the same unit. The readouts above show the result of <code style="font-family:var(--mono);font-size:12px;background:var(--surface2);border-radius:3px;padding:1px 5px;color:var(--purple)">mpToUE(x, y, z)</code> — placing the joint in a 200×200 cm virtual space centred on the player.
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<!-- TAB 3 — Coord Space                                        -->
+<!-- ══════════════════════════════════════════════════════════ -->
+<section class="panel" data-panel="coords" id="panel-coords">
+  <div>
+    <div class="pt">Coordinate Space Conversion</div>
+    <div class="ps">Drag the sliders to move a point in MediaPipe space and watch the UE axes update live. The diagrams show how each axis maps.</div>
+  </div>
+
+  <div class="g2">
+    <div>
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-title">MediaPipe input</div>
+        <div class="ctrl-row">
+          <span class="ctrl-label">x (left→right)</span>
+          <input class="slider" id="cs-x" type="range" min="0" max="1" step="0.01" value="0.5"/>
+          <span class="val" id="cs-x-v">0.50</span>
+        </div>
+        <div class="ctrl-row">
+          <span class="ctrl-label">y (top→bottom)</span>
+          <input class="slider" id="cs-y" type="range" min="0" max="1" step="0.01" value="0.5"/>
+          <span class="val" id="cs-y-v">0.50</span>
+        </div>
+        <div class="ctrl-row">
+          <span class="ctrl-label">z (depth)</span>
+          <input class="slider" id="cs-z" type="range" min="-0.5" max="0.5" step="0.01" value="0"/>
+          <span class="val" id="cs-z-v">0.00</span>
+        </div>
+      </div>
+
+      <div class="readouts">
+        <div class="ro"><div class="ro-val" id="cs-ue-x">0</div><div class="ro-label">UE X (fwd, cm)</div></div>
+        <div class="ro"><div class="ro-val" id="cs-ue-y">0</div><div class="ro-label">UE Y (right, cm)</div></div>
+        <div class="ro"><div class="ro-val" id="cs-ue-z">0</div><div class="ro-label">UE Z (up, cm)</div></div>
+      </div>
+
+      <div class="body-text" style="margin-top:14px">
+        <strong>Three key axis swaps:</strong><br>
+        MP <code style="font-family:var(--mono);font-size:12px;background:var(--surface2);border-radius:3px;padding:1px 5px">z</code> (negative=closer) → UE <strong>X</strong> (negated)<br>
+        MP <code style="font-family:var(--mono);font-size:12px;background:var(--surface2);border-radius:3px;padding:1px 5px">x</code> (0–1, center=0.5) → UE <strong>Y</strong> (centered &amp; negated)<br>
+        MP <code style="font-family:var(--mono);font-size:12px;background:var(--surface2);border-radius:3px;padding:1px 5px">y</code> (0–1, 0=top) → UE <strong>Z</strong> (centered &amp; negated, so up=positive)
+      </div>
+
+      <div class="card" style="margin-top:14px">
+        <div class="card-title">Step-by-step formula</div>
+        <table class="formula-table" style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead>
+            <tr style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em">
+              <th style="text-align:left;padding:4px 6px;font-weight:600">Step</th>
+              <th style="text-align:left;padding:4px 6px;font-weight:600">Operation</th>
+              <th style="text-align:right;padding:4px 6px;font-weight:600;white-space:nowrap">Live value</th>
+              <th style="text-align:left;padding:4px 6px;font-weight:600">→</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="formula-row" id="frow-1">
+              <td style="padding:5px 6px;color:var(--muted);font-family:var(--mono);font-size:11px">①</td>
+              <td style="padding:5px 6px">Center x &nbsp;<span style="color:var(--muted);font-family:var(--mono);font-size:12px">x − 0.5</span></td>
+              <td style="padding:5px 6px;text-align:right;font-family:var(--mono);color:var(--accent)" id="fs-cx">—</td>
+              <td style="padding:5px 6px;color:var(--muted);font-size:12px">basis for UE Y</td>
+            </tr>
+            <tr class="formula-row" id="frow-2">
+              <td style="padding:5px 6px;color:var(--muted);font-family:var(--mono);font-size:11px">②</td>
+              <td style="padding:5px 6px">Negate &amp; scale &nbsp;<span style="color:var(--muted);font-family:var(--mono);font-size:12px">−(x−0.5) × 200</span></td>
+              <td style="padding:5px 6px;text-align:right;font-family:var(--mono);color:var(--green)" id="fs-uy">—</td>
+              <td style="padding:5px 6px;font-weight:700;color:var(--green)">= UE Y cm</td>
+            </tr>
+            <tr class="formula-row" id="frow-3" style="border-top:1px solid var(--border)">
+              <td style="padding:5px 6px;color:var(--muted);font-family:var(--mono);font-size:11px">③</td>
+              <td style="padding:5px 6px">Center y &nbsp;<span style="color:var(--muted);font-family:var(--mono);font-size:12px">y − 0.5</span></td>
+              <td style="padding:5px 6px;text-align:right;font-family:var(--mono);color:var(--accent)" id="fs-cy">—</td>
+              <td style="padding:5px 6px;color:var(--muted);font-size:12px">basis for UE Z</td>
+            </tr>
+            <tr class="formula-row" id="frow-4">
+              <td style="padding:5px 6px;color:var(--muted);font-family:var(--mono);font-size:11px">④</td>
+              <td style="padding:5px 6px">Negate &amp; scale &nbsp;<span style="color:var(--muted);font-family:var(--mono);font-size:12px">−(y−0.5) × 200</span></td>
+              <td style="padding:5px 6px;text-align:right;font-family:var(--mono);color:var(--amber)" id="fs-uz">—</td>
+              <td style="padding:5px 6px;font-weight:700;color:var(--amber)">= UE Z cm</td>
+            </tr>
+            <tr class="formula-row" id="frow-5" style="border-top:1px solid var(--border)">
+              <td style="padding:5px 6px;color:var(--muted);font-family:var(--mono);font-size:11px">⑤</td>
+              <td style="padding:5px 6px">Negate depth &nbsp;<span style="color:var(--muted);font-family:var(--mono);font-size:12px">−z × 100</span></td>
+              <td style="padding:5px 6px;text-align:right;font-family:var(--mono);color:var(--purple)" id="fs-ux">—</td>
+              <td style="padding:5px 6px;font-weight:700;color:var(--purple)">= UE X cm</td>
+            </tr>
+          </tbody>
+        </table>
+        <div style="margin-top:10px;font-size:12px;color:var(--muted);line-height:1.6">
+          Why center x/y? MediaPipe outputs 0–1 with 0.5 = center of frame. Subtracting 0.5 makes center = 0 in UE space.<br>
+          Why negate y? MediaPipe y grows downward (0=top); UE Z grows upward — so we flip the sign.<br>
+          Why negate z? MediaPipe z is negative when closer (in front of you); UE X is positive forward — negate to match.
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="axis-diagram">
+        <div class="axis-box">
+          <div class="axis-title">MediaPipe Space</div>
+          <svg id="mp-axis-svg" width="180" height="180" viewBox="0 0 180 180"></svg>
+        </div>
+        <div class="axis-box">
+          <div class="axis-title">UE World Space</div>
+          <svg id="ue-axis-svg" width="180" height="180" viewBox="0 0 180 180"></svg>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<!-- TAB 4 — Rotations                                          -->
+<!-- ══════════════════════════════════════════════════════════ -->
+<section class="panel" data-panel="rotations" id="panel-rotations">
+  <div>
+    <div class="pt">Bone Rotations — Position vs Rotation</div>
+    <div class="ps">MediaPipe gives you joint <em>positions</em>. UE bones need <em>rotations</em>. This tab explains why, shows both approaches (FK and IK), and lets you explore the math interactively.</div>
+  </div>
+
+  <!-- ── Why not set positions? ─────────────────────────────── -->
+  <div class="card">
+    <div class="card-title">Why you cannot directly set bone X, Y, Z</div>
+    <div class="g2" style="gap:12px;margin-top:4px">
+      <div class="body-text">
+        UE's skeletal mesh uses a <strong>bone hierarchy</strong>: every bone stores a <strong>local rotation</strong>
+        relative to its parent bone's frame — not a world position. Moving a bone rotates all its children with it,
+        which is exactly how a real skeleton works.<br><br>
+        <code style="font-family:var(--mono);font-size:12px;background:var(--surface3);border-radius:3px;padding:2px 6px">SetBoneLocationByName</code>
+        only works on the root bone or with physics simulation active — on an animated character it fights the
+        animation pose every frame and snaps back.<br><br>
+        The correct approach: take two consecutive landmarks → compute the direction vector → convert to a
+        <code style="font-family:var(--mono);font-size:12px;background:var(--surface3);border-radius:3px;padding:2px 6px">FRotator</code>
+        → call <code style="font-family:var(--mono);font-size:12px;background:var(--surface3);border-radius:3px;padding:2px 6px">SetBoneRotationByName</code>.
+      </div>
+      <div>
+        <svg viewBox="0 0 240 180" width="240" height="180" style="display:block;margin:0 auto">
+          <!-- hierarchy diagram: pelvis → spine → chest → neck → head -->
+          <text x="120" y="16" text-anchor="middle" font-size="10" fill="var(--muted)" font-family="var(--font)" font-weight="700">Bone Hierarchy (local rotations)</text>
+          <!-- lines -->
+          <line x1="120" y1="32" x2="120" y2="52" stroke="var(--dim)" stroke-width="2"/>
+          <line x1="120" y1="72" x2="120" y2="92" stroke="var(--dim)" stroke-width="2"/>
+          <line x1="120" y1="112" x2="120" y2="132" stroke="var(--dim)" stroke-width="2"/>
+          <line x1="120" y1="152" x2="120" y2="172" stroke="var(--dim)" stroke-width="2"/>
+          <!-- bones -->
+          <rect x="70" y="22" width="100" height="20" rx="4" fill="var(--surface2)" stroke="var(--border)"/>
+          <text x="120" y="36" text-anchor="middle" font-size="11" fill="var(--text)" font-family="var(--mono)">pelvis (root)</text>
+          <rect x="70" y="62" width="100" height="20" rx="4" fill="var(--surface2)" stroke="var(--accent)" stroke-width="1.5"/>
+          <text x="120" y="76" text-anchor="middle" font-size="11" fill="var(--accent)" font-family="var(--mono)">spine_01</text>
+          <rect x="70" y="102" width="100" height="20" rx="4" fill="var(--surface2)" stroke="var(--border)"/>
+          <text x="120" y="116" text-anchor="middle" font-size="11" fill="var(--text)" font-family="var(--mono)">chest</text>
+          <rect x="70" y="142" width="100" height="20" rx="4" fill="var(--surface2)" stroke="var(--border)"/>
+          <text x="120" y="156" text-anchor="middle" font-size="11" fill="var(--text)" font-family="var(--mono)">neck_01</text>
+          <!-- rotation label -->
+          <text x="178" y="76" font-size="9" fill="var(--accent)" font-family="var(--mono)">← rotate this</text>
+          <text x="178" y="88" font-size="9" fill="var(--muted)" font-family="var(--mono)">children follow</text>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── FK vs IK ────────────────────────────────────────────── -->
+  <div class="g2">
+    <div class="card">
+      <div class="card-title" style="color:var(--accent)">FK — Forward Kinematics</div>
+      <div class="body-text">
+        <strong>How it works:</strong> take the parent→child landmark vector in UE space,
+        call <code style="font-family:var(--mono);font-size:12px;background:var(--surface3);border-radius:3px;padding:2px 6px">directionToRotator()</code>,
+        apply as bone rotation. Repeat up the chain.<br><br>
+        <strong style="color:var(--green)">Pros:</strong> No solver, works for any bone, predictable, low CPU cost.<br><br>
+        <strong style="color:var(--red)">Cons:</strong> Errors can accumulate in long chains; doesn't automatically
+        ensure the wrist lands exactly at the MediaPipe wrist position.<br><br>
+        <strong>Best for:</strong> spine, neck, head, pelvis tilt, upper arm direction.
+      </div>
+      <div style="margin-top:12px;background:var(--surface3);border-radius:6px;padding:10px;font-family:var(--mono);font-size:11.5px;line-height:1.7;color:var(--muted)">
+        <span style="color:var(--muted)"># FK example: upper arm</span><br>
+        <span style="color:var(--purple)">dir_ue</span> = <span style="color:var(--accent)">mpToUE</span>(elbow) − <span style="color:var(--accent)">mpToUE</span>(shoulder)<br>
+        <span style="color:var(--purple)">rot</span> = <span style="color:var(--accent)">directionToRotator</span>(dir_ue)<br>
+        <span style="color:var(--text)">SetBoneRotationByName(<span style="color:var(--amber)">"upperarm_r"</span>, rot)</span>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title" style="color:var(--purple)">IK — Inverse Kinematics</div>
+      <div class="body-text">
+        <strong>How it works:</strong> feed the UE-space wrist/ankle position as an
+        <strong>IK effector target</strong>. UE's built-in <strong>FABRIK</strong> or
+        <strong>Two-Bone IK</strong> Blueprint node back-computes the shoulder and elbow
+        rotations automatically.<br><br>
+        <strong style="color:var(--green)">Pros:</strong> Accurate end-effector placement; solver handles body proportions.<br><br>
+        <strong style="color:var(--red)">Cons:</strong> Requires IK Rig or AnimGraph setup in UE5; slightly higher cost.<br><br>
+        <strong>Best for:</strong> wrist, ankle, finger tips — anywhere precise world-space placement matters.
+      </div>
+      <div style="margin-top:12px;background:var(--surface3);border-radius:6px;padding:10px;font-family:var(--mono);font-size:11.5px;line-height:1.7;color:var(--muted)">
+        <span style="color:var(--muted)"># IK example: right hand</span><br>
+        <span style="color:var(--purple)">wrist_ue</span> = <span style="color:var(--accent)">mpToUE</span>(lm[16])<br>
+        <span style="color:var(--muted)"># In AnimGraph Blueprint:</span><br>
+        <span style="color:var(--text)">TwoBoneIK.EffectorLocation = wrist_ue</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── FK playground ──────────────────────────────────────── -->
+  <div>
+    <div class="pt" style="font-size:15px;margin-bottom:4px">FK Playground — direction vector → FRotator</div>
+    <div class="ps">Drag Root (parent joint) and Tip (child joint) to simulate a limb segment. The FRotator values update live — these are what you'd pass to <code style="font-family:var(--mono);font-size:12px;background:var(--surface2);border-radius:3px;padding:1px 5px">SetBoneRotationByName</code>.</div>
+  </div>
+
+  <div class="g2">
+    <div class="fig-wrap">
+      <div class="fig-label">Drag root / joint / tip — joint angle</div>
+      <svg id="rot-svg" class="drag-canvas" width="320" height="320" viewBox="0 0 320 320">
+        <line id="rot-line1" stroke="var(--dim)" stroke-width="2.5"/>
+        <line id="rot-line2" stroke="var(--dim)" stroke-width="2.5"/>
+        <path id="rot-arc" fill="none" stroke="var(--amber)" stroke-width="1.5" stroke-dasharray="5 3"/>
+        <circle id="rot-root"  class="drag-point" cx="100" cy="240" r="10" data-which="root"/>
+        <circle id="rot-joint" class="drag-point" cx="160" cy="140" r="10" data-which="joint" fill="var(--purple)"/>
+        <circle id="rot-tip"   class="drag-point" cx="240" cy="220" r="10" data-which="tip"/>
+        <text id="rot-angle-text" x="162" y="130" text-anchor="middle" font-family="var(--mono)" font-size="13" fill="var(--amber)"></text>
+        <text x="90" y="258" font-size="10" fill="var(--muted)" font-family="var(--font)">Root</text>
+        <text id="rot-joint-lbl" x="163" y="128" text-anchor="middle" font-size="10" fill="var(--muted)" font-family="var(--font)"></text>
+        <text x="243" y="238" font-size="10" fill="var(--muted)" font-family="var(--font)">Tip</text>
+      </svg>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div class="readouts">
+        <div class="ro"><div class="ro-val" id="rot-angle-val">—</div><div class="ro-label">Joint angle (°)</div></div>
+        <div class="ro"><div class="ro-val" id="rot-ue-pitch">—</div><div class="ro-label">FK Pitch (°)</div></div>
+        <div class="ro"><div class="ro-val" id="rot-ue-yaw">—</div><div class="ro-label">FK Yaw (°)</div></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">directionToRotator — how it works</div>
+        <div class="body-text">
+          Given the <strong>parent→child</strong> direction vector <em>d</em> (already in UE space):<br><br>
+          <code style="font-family:var(--mono);font-size:12px;background:var(--surface3);border-radius:3px;padding:2px 6px;display:block;margin:4px 0;line-height:1.7">
+            n = normalize(d)<br>
+            Pitch = −asin(n.Z)  × (180/π)<br>
+            Yaw   =  atan2(n.Y, n.X) × (180/π)<br>
+            Roll  = 0
+          </code>
+          <strong>Pitch</strong> captures how much the bone points up/down (elevation).<br>
+          <strong>Yaw</strong> captures which horizontal direction it points (azimuth).<br>
+          <strong>Roll</strong> (spin around the bone axis) cannot be determined from a single
+          direction vector — set it to 0 or keep it from the previous frame.
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">UE FRotator mapping</div>
+        <div class="body-text">
+          <strong>Pitch</strong> = rotation around Y-axis (nodding). Map to elbow/knee bend angle.<br><br>
+          <strong>Yaw</strong> = rotation around Z-axis (turning). Map to shoulder/hip twist.<br><br>
+          <strong>Roll</strong> = rotation around X-axis (tilting). Rarely needed for body control.
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">EMA Smoothing</div>
+        <div class="ctrl-row">
+          <span class="ctrl-label">Alpha</span>
+          <input class="slider" id="ema-alpha" type="range" min="0.05" max="1" step="0.05" value="0.4"/>
+          <span class="val" id="ema-alpha-v">0.4</span>
+        </div>
+        <div class="btn-row" style="margin-top:12px">
+          <button class="btn" id="ema-noise-btn">Animate noisy signal</button>
+          <button class="btn on" id="ema-toggle-btn">Smoothing ON</button>
+        </div>
+        <div style="margin-top:10px">
+          <svg id="ema-graph" width="100%" height="80" viewBox="0 0 280 80" preserveAspectRatio="none" style="display:block;border:1px solid var(--border);border-radius:6px;background:var(--surface2)"></svg>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px">Red = raw signal · Blue = smoothed (EMA)</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<!-- TAB 5 — Gestures                                           -->
+<!-- ══════════════════════════════════════════════════════════ -->
+<section class="panel" data-panel="gestures" id="panel-gestures">
+  <div>
+    <div class="pt">Soulslike Gesture Map</div>
+    <div class="ps">Adjust the landmark sliders to replicate each pose. The detector lights up green when the threshold is met — these are the exact conditions used in your Python bridge.</div>
+  </div>
+
+  <div class="gesture-grid" id="gesture-grid"></div>
+
+  <div class="body-text">
+    <strong>Design tip:</strong> Keep thresholds generous enough to fire reliably but tight enough to avoid accidental triggers. Test with multiple body types. Add a short cooldown (200–400 ms) per action to prevent rapid repeated casts — a core soulslike mechanic.
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<!-- TAB 6 — Python Code                                        -->
+<!-- ══════════════════════════════════════════════════════════ -->
+<section class="panel" data-panel="code" id="panel-code">
+  <div>
+    <div class="pt">Python Bridge — Complete Code</div>
+    <div class="ps">Copy these three files into your project. Install dependencies with <code style="font-family:var(--mono);font-size:12px;background:var(--surface2);border-radius:3px;padding:1px 5px">pip install mediapipe opencv-python</code>.</div>
+  </div>
+
+  <div id="code-blocks"></div>
+
+  <div class="card">
+    <div class="card-title">UE Blueprint (pseudocode)</div>
+    <div class="body-text" style="max-width:none">
+      In the <strong>BeginPlay</strong> event: create a <code style="font-family:var(--mono);font-size:12px;background:var(--surface2);border-radius:3px;padding:1px 5px">UDPReceiver</code> socket bound to <code style="font-family:var(--mono);font-size:12px;background:var(--surface2);border-radius:3px;padding:1px 5px">127.0.0.1:7000</code>.<br><br>
+      In the <strong>Tick</strong> event: read available bytes → parse JSON → extract <code style="font-family:var(--mono);font-size:12px;background:var(--surface2);border-radius:3px;padding:1px 5px">gesture</code> string and <code style="font-family:var(--mono);font-size:12px;background:var(--surface2);border-radius:3px;padding:1px 5px">landmarks[]</code> array.<br><br>
+      Feed landmarks into the <strong>Procedural Animation Component</strong> or send gesture strings to the <strong>Input Action</strong> system as synthetic key presses.<br><br>
+      The <strong>UE OSC Plugin</strong> (built-in, enable in Plugins menu) is an alternative to raw UDP — it gives you named addresses like <code style="font-family:var(--mono);font-size:12px;background:var(--surface2);border-radius:3px;padding:1px 5px">/soulslike/gesture</code> that bind directly to Blueprint pins.
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<!-- TAB 7 — Free Tools                                         -->
+<!-- ══════════════════════════════════════════════════════════ -->
+<section class="panel" data-panel="tools" id="panel-tools">
+  <div>
+    <div class="pt">Free Tools Reference</div>
+    <div class="ps">Everything you need to ship a MediaPipe-driven soulslike at zero licensing cost. Ordered by pipeline stage.</div>
+  </div>
+  <div class="tool-list" id="tool-list"></div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<!-- TAB 8 — 3D Skeleton Lab                                    -->
+<!-- ══════════════════════════════════════════════════════════ -->
+<section class="panel" data-panel="skellab" id="panel-skellab">
+  <div>
+    <div class="pt">3D Skeleton Lab</div>
+    <div class="ps">Drag the canvas to orbit. Click any joint to select it, then move it with the sliders. All bone angles and FRotator values update live.</div>
+  </div>
+
+  <div class="skel-layout">
+    <!-- Left: 3D canvas -->
+    <div class="skel-canvas-wrap">
+      <canvas id="skel3d"></canvas>
+      <div class="skel-hint">Drag to orbit &nbsp;·&nbsp; Click joint to select</div>
+    </div>
+
+    <!-- Right: controls + angle table + formula -->
+    <div class="skel-right">
+
+      <!-- Selected joint controls -->
+      <div class="card" id="skel-joint-card">
+        <div class="card-title">Joint: <span id="skel-joint-name" style="color:var(--accent);font-family:var(--mono)">— click a joint —</span></div>
+        <div class="joint-sliders" id="skel-sliders">
+          <div class="ctrl-row">
+            <span class="ctrl-label">MP x (left→right)</span>
+            <input class="slider" id="sj-x" type="range" min="0" max="1" step="0.005" value="0.5" disabled/>
+            <span class="val" id="sj-xv">0.50</span>
+          </div>
+          <div class="ctrl-row">
+            <span class="ctrl-label">MP y (top→bottom)</span>
+            <input class="slider" id="sj-y" type="range" min="0" max="1" step="0.005" value="0.5" disabled/>
+            <span class="val" id="sj-yv">0.50</span>
+          </div>
+          <div class="ctrl-row">
+            <span class="ctrl-label">MP z (depth)</span>
+            <input class="slider" id="sj-z" type="range" min="-0.4" max="0.4" step="0.005" value="0" disabled/>
+            <span class="val" id="sj-zv">0.00</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bone angle table -->
+      <div class="card" style="flex:1;overflow:auto">
+        <div class="card-title">Bone angles &amp; FRotators</div>
+        <table class="bone-angle-table" id="bat">
+          <thead>
+            <tr>
+              <th>Bone</th>
+              <th style="text-align:right">Angle</th>
+              <th>Pitch / Yaw</th>
+            </tr>
+          </thead>
+          <tbody id="bat-body"></tbody>
+        </table>
+      </div>
+
+      <!-- Formula for selected bone -->
+      <div class="card" id="skel-formula-card">
+        <div class="card-title">How <span id="skel-formula-bone" style="color:var(--accent);font-family:var(--mono)">—</span> is calculated</div>
+        <div class="formula-box" id="skel-formula-box">Click a row in the table above to see the calculation.</div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+</div><!-- .panels -->
+
+<script>
+(function () {
+  'use strict';
+  const M = window.MpUE;
+
+  // ── Tab routing ─────────────────────────────────────────────
+  const tabs   = document.querySelectorAll('.tab');
+  const panels = document.querySelectorAll('.panel');
+
+  function showTab(name) {
+    tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+    panels.forEach(p => p.classList.toggle('active', p.dataset.panel === name));
+    // Notify listeners (e.g. 3D Skeleton Lab needs a deferred init)
+    document.dispatchEvent(new CustomEvent('tabchange', {detail: name}));
+  }
+
+  tabs.forEach(t => t.addEventListener('click', () => showTab(t.dataset.tab)));
+  showTab('pipeline');
+
+  // ════════════════════════════════════════════════════════════
+  // TAB 1 — Pipeline
+  // ════════════════════════════════════════════════════════════
+  const PIPE_STAGES = [
+    {
+      icon: `<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="3" width="20" height="14" rx="2"/><circle cx="12" cy="10" r="3"/><path d="M2 21h20"/></svg>`,
+      name: 'Webcam', sub: '~0 ms',
+      detail: `<strong>OpenCV</strong> grabs frames from your webcam at 30–60 fps. Use <code>cv2.VideoCapture(0)</code> for the default camera. Resolution 640×480 is sufficient — MediaPipe downsamples internally. Each frame is passed as a NumPy RGB array into the next stage.`,
+    },
+    {
+      icon: `<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3"/><path d="M6 20v-2a6 6 0 0 1 12 0v2"/><path d="M3 11h2m14 0h2M12 3V1"/></svg>`,
+      name: 'MediaPipe Pose', sub: '8–20 ms',
+      detail: `<strong>BlazePose</strong> detects 33 landmarks on your body. Each landmark has <code>x</code>, <code>y</code>, <code>z</code> (normalized 0–1 for x/y, depth for z) and <code>visibility</code> (0–1 confidence). Call <code>pose.process(rgb_frame)</code> once per frame. On a modern laptop CPU expect 8–20 ms per frame.`,
+    },
+    {
+      icon: `<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/><path d="m9 12 2 2 4-4"/></svg>`,
+      name: 'Python Script', sub: '&lt;1 ms',
+      detail: `Your Python bridge extracts landmark positions, runs <strong>gesture detection</strong> (attack, guard, dodge, crouch), applies <strong>EMA smoothing</strong> to reduce jitter, and calls <code>mpToUE(x, y, z)</code> to convert coordinates. Results are packed into a compact JSON payload ready to send.`,
+    },
+    {
+      icon: `<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>`,
+      name: 'UDP Socket', sub: '&lt;1 ms (LAN)',
+      detail: `Python's built-in <code>socket</code> module sends a UDP datagram to <code>127.0.0.1:7000</code>. UDP is fire-and-forget — no connection overhead, no retransmit pauses. A 33-landmark JSON payload is ~1.5 KB, well within a single MTU. Alternatively, use <strong>OSC</strong> via <code>python-osc</code> for named parameter addressing.`,
+    },
+    {
+      icon: `<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/></svg>`,
+      name: 'UE Blueprint', sub: '&lt;1 ms',
+      detail: `A Blueprint actor opens a <strong>UDP socket</strong> in BeginPlay and reads datagrams each Tick. The JSON is parsed (or use the <strong>OSC Plugin</strong> for structured data). Landmark positions and gesture strings are dispatched to the character's input system or procedural animation component.`,
+    },
+    {
+      icon: `<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="5" r="2"/><path d="M12 7v6"/><path d="m8 17 4-4 4 4"/><path d="M8 21h8"/></svg>`,
+      name: 'Character', sub: 'game frame',
+      detail: `The character controller consumes gestures as <strong>synthetic input actions</strong>. Landmark positions optionally drive a <strong>Procedural Animation Blueprint</strong> for body leaning. Apply a <strong>200–400 ms cooldown</strong> per combat action — an intentional soulslike mechanic that also prevents double-fires from jitter.`,
+    },
+  ];
+
+  const flowEl = document.getElementById('pipe-flow');
+  const detailEl = document.getElementById('pipe-detail');
+
+  PIPE_STAGES.forEach((s, i) => {
+    if (i > 0) {
+      const arr = document.createElement('div');
+      arr.className = 'pipe-arrow';
+      arr.textContent = '›';
+      flowEl.appendChild(arr);
+    }
+    const step = document.createElement('div');
+    step.className = 'pipe-step';
+    step.innerHTML = `${s.icon}<div class="pipe-name">${s.name}</div><div class="pipe-sub">${s.sub}</div>`;
+    step.addEventListener('click', () => {
+      document.querySelectorAll('.pipe-step').forEach(el => el.classList.remove('sel'));
+      step.classList.add('sel');
+      detailEl.innerHTML = s.detail;
+    });
+    flowEl.appendChild(step);
+  });
+
+  // ════════════════════════════════════════════════════════════
+  // TAB 2 — Landmark Explorer
+  // ════════════════════════════════════════════════════════════
+  const LM_NAMES = [
+    'NOSE','LEFT_EYE_INNER','LEFT_EYE','LEFT_EYE_OUTER',
+    'RIGHT_EYE_INNER','RIGHT_EYE','RIGHT_EYE_OUTER',
+    'LEFT_EAR','RIGHT_EAR','MOUTH_LEFT','MOUTH_RIGHT',
+    'LEFT_SHOULDER','RIGHT_SHOULDER','LEFT_ELBOW','RIGHT_ELBOW',
+    'LEFT_WRIST','RIGHT_WRIST','LEFT_PINKY','RIGHT_PINKY',
+    'LEFT_INDEX','RIGHT_INDEX','LEFT_THUMB','RIGHT_THUMB',
+    'LEFT_HIP','RIGHT_HIP','LEFT_KNEE','RIGHT_KNEE',
+    'LEFT_ANKLE','RIGHT_ANKLE','LEFT_HEEL','RIGHT_HEEL',
+    'LEFT_FOOT_INDEX','RIGHT_FOOT_INDEX',
+  ];
+
+  // Default normalized positions for a front-facing T-pose figure
+  const LM_DEFAULT = [
+    {x:.50,y:.07,z:0},   // 0 NOSE
+    {x:.46,y:.09,z:0},   // 1 LEFT_EYE_INNER
+    {x:.44,y:.09,z:0},   // 2 LEFT_EYE
+    {x:.42,y:.09,z:0},   // 3 LEFT_EYE_OUTER
+    {x:.54,y:.09,z:0},   // 4 RIGHT_EYE_INNER
+    {x:.56,y:.09,z:0},   // 5 RIGHT_EYE
+    {x:.58,y:.09,z:0},   // 6 RIGHT_EYE_OUTER
+    {x:.40,y:.11,z:0},   // 7 LEFT_EAR
+    {x:.60,y:.11,z:0},   // 8 RIGHT_EAR
+    {x:.47,y:.13,z:0},   // 9 MOUTH_LEFT
+    {x:.53,y:.13,z:0},   // 10 MOUTH_RIGHT
+    {x:.35,y:.28,z:0},   // 11 LEFT_SHOULDER
+    {x:.65,y:.28,z:0},   // 12 RIGHT_SHOULDER
+    {x:.22,y:.42,z:0},   // 13 LEFT_ELBOW
+    {x:.78,y:.42,z:0},   // 14 RIGHT_ELBOW
+    {x:.10,y:.56,z:0},   // 15 LEFT_WRIST
+    {x:.90,y:.56,z:0},   // 16 RIGHT_WRIST
+    {x:.08,y:.62,z:0},   // 17 LEFT_PINKY
+    {x:.92,y:.62,z:0},   // 18 RIGHT_PINKY
+    {x:.07,y:.60,z:0},   // 19 LEFT_INDEX
+    {x:.93,y:.60,z:0},   // 20 RIGHT_INDEX
+    {x:.09,y:.58,z:0},   // 21 LEFT_THUMB
+    {x:.91,y:.58,z:0},   // 22 RIGHT_THUMB
+    {x:.39,y:.55,z:0},   // 23 LEFT_HIP
+    {x:.61,y:.55,z:0},   // 24 RIGHT_HIP
+    {x:.37,y:.72,z:0},   // 25 LEFT_KNEE
+    {x:.63,y:.72,z:0},   // 26 RIGHT_KNEE
+    {x:.36,y:.88,z:0},   // 27 LEFT_ANKLE
+    {x:.64,y:.88,z:0},   // 28 RIGHT_ANKLE
+    {x:.35,y:.92,z:0},   // 29 LEFT_HEEL
+    {x:.65,y:.92,z:0},   // 30 RIGHT_HEEL
+    {x:.33,y:.96,z:0},   // 31 LEFT_FOOT_INDEX
+    {x:.67,y:.96,z:0},   // 32 RIGHT_FOOT_INDEX
+  ];
+
+  const LM_BONES = [
+    [0,9],[0,10],[9,10],        // face
+    [7,11],[8,12],              // ear→shoulder
+    [11,12],                    // shoulders
+    [11,13],[13,15],            // left arm
+    [12,14],[14,16],            // right arm
+    [15,17],[15,19],[15,21],    // left hand
+    [16,18],[16,20],[16,22],    // right hand
+    [11,23],[12,24],[23,24],    // torso
+    [23,25],[25,27],[27,29],[27,31], // left leg
+    [24,26],[26,28],[28,30],[28,32], // right leg
+  ];
+
+  const lmLandmarks = LM_DEFAULT.map(p => ({...p}));
+  let selectedLm = -1;
+  const svgW = 220, svgH = 380;
+
+  const lmSvg = document.getElementById('lm-svg');
+
+  function lmSvgX(lm) { return lm.x * svgW; }
+  function lmSvgY(lm) { return lm.y * svgH; }
+
+  function buildLmSvg() {
+    lmSvg.innerHTML = '';
+    // bones
+    LM_BONES.forEach(([a, b]) => {
+      const ln = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      ln.setAttribute('x1', lmSvgX(lmLandmarks[a]));
+      ln.setAttribute('y1', lmSvgY(lmLandmarks[a]));
+      ln.setAttribute('x2', lmSvgX(lmLandmarks[b]));
+      ln.setAttribute('y2', lmSvgY(lmLandmarks[b]));
+      ln.classList.add('lm-bone');
+      ln.dataset.a = a; ln.dataset.b = b;
+      lmSvg.appendChild(ln);
+    });
+    // joints
+    lmLandmarks.forEach((lm, i) => {
+      const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      c.setAttribute('cx', lmSvgX(lm));
+      c.setAttribute('cy', lmSvgY(lm));
+      c.setAttribute('r', i === selectedLm ? 7 : 5);
+      c.classList.add('lm-chip');
+      if (i === selectedLm) c.classList.add('sel');
+      c.dataset.idx = i;
+      c.addEventListener('click', () => selectLm(i));
+      const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+      title.textContent = `${i}: ${LM_NAMES[i]}`;
+      c.appendChild(title);
+      lmSvg.appendChild(c);
+    });
+  }
+
+  function selectLm(idx) {
+    selectedLm = idx;
+    const lm = lmLandmarks[idx];
+    document.getElementById('lm-name').textContent = `#${idx} ${LM_NAMES[idx]}`;
+    ['lm-x','lm-y','lm-z'].forEach(id => document.getElementById(id).disabled = false);
+    document.getElementById('lm-x').value = lm.x;
+    document.getElementById('lm-y').value = lm.y;
+    document.getElementById('lm-z').value = lm.z;
+    updateLmReadouts();
+    buildLmSvg();
+  }
+
+  function updateLmReadouts() {
+    if (selectedLm < 0) return;
+    const lm = lmLandmarks[selectedLm];
+    document.getElementById('lm-x-v').textContent = (+lm.x).toFixed(2);
+    document.getElementById('lm-y-v').textContent = (+lm.y).toFixed(2);
+    document.getElementById('lm-z-v').textContent = (+lm.z).toFixed(2);
+    const ue = M.mpToUE(lm.x, lm.y, lm.z);
+    document.getElementById('ue-x-val').textContent = ue.X.toFixed(1);
+    document.getElementById('ue-y-val').textContent = ue.Y.toFixed(1);
+    document.getElementById('ue-z-val').textContent = ue.Z.toFixed(1);
+  }
+
+  ['x','y','z'].forEach(axis => {
+    document.getElementById(`lm-${axis}`).addEventListener('input', e => {
+      if (selectedLm < 0) return;
+      lmLandmarks[selectedLm][axis] = parseFloat(e.target.value);
+      updateLmReadouts();
+      buildLmSvg();
+    });
+  });
+
+  buildLmSvg();
+
+  // ════════════════════════════════════════════════════════════
+  // TAB 3 — Coord Space
+  // ════════════════════════════════════════════════════════════
+  function updateCoordSpace() {
+    const x = parseFloat(document.getElementById('cs-x').value);
+    const y = parseFloat(document.getElementById('cs-y').value);
+    const z = parseFloat(document.getElementById('cs-z').value);
+    document.getElementById('cs-x-v').textContent = x.toFixed(2);
+    document.getElementById('cs-y-v').textContent = y.toFixed(2);
+    document.getElementById('cs-z-v').textContent = z.toFixed(2);
+    const ue = M.mpToUE(x, y, z);
+    document.getElementById('cs-ue-x').textContent = ue.X.toFixed(1);
+    document.getElementById('cs-ue-y').textContent = ue.Y.toFixed(1);
+    document.getElementById('cs-ue-z').textContent = ue.Z.toFixed(1);
+
+    // Formula walkthrough — steps ①–⑤
+    const cx = x - 0.5;
+    const cy = y - 0.5;
+    document.getElementById('fs-cx').textContent = cx.toFixed(3);
+    document.getElementById('fs-uy').textContent = ue.Y.toFixed(1) + ' cm';
+    document.getElementById('fs-cy').textContent = cy.toFixed(3);
+    document.getElementById('fs-uz').textContent = ue.Z.toFixed(1) + ' cm';
+    document.getElementById('fs-ux').textContent = ue.X.toFixed(1) + ' cm';
+
+    // Briefly flash rows that changed to draw the eye
+    ['frow-1','frow-2','frow-3','frow-4','frow-5'].forEach(id => {
+      const row = document.getElementById(id);
+      if (!row) return;
+      row.style.transition = 'background 80ms';
+      row.style.background = 'var(--accent-hi)';
+      setTimeout(() => { row.style.background = ''; }, 200);
+    });
+
+    drawAxisDiagrams(x, y, z, ue);
+  }
+
+  function drawAxisDiagrams(mx, my, mz, ue) {
+    // MediaPipe diagram: show x→right, y↓down, z into screen
+    const mpSvg = document.getElementById('mp-axis-svg');
+    const cxA = 90, cyA = 90, L = 60;
+    // dot position in image space
+    const dotMpX = mx * 180;
+    const dotMpY = my * 180;
+
+    mpSvg.innerHTML = `
+      <text x="90" y="16" text-anchor="middle" font-size="10" fill="var(--muted)" font-family="var(--mono)">image space</text>
+      <line x1="20" y1="90" x2="160" y2="90" stroke="var(--dim)" stroke-width="1" stroke-dasharray="3 3"/>
+      <line x1="90" y1="20" x2="90" y2="160" stroke="var(--dim)" stroke-width="1" stroke-dasharray="3 3"/>
+      <text x="165" y="94" font-size="10" fill="var(--accent)" font-family="var(--mono)">x+</text>
+      <text x="88" y="18" text-anchor="middle" font-size="10" fill="var(--red)" font-family="var(--mono)">y+</text>
+      <circle cx="${dotMpX}" cy="${dotMpY}" r="6" fill="var(--amber)" opacity="0.9"/>
+      <text x="${dotMpX+8}" y="${dotMpY-4}" font-size="9" fill="var(--amber)" font-family="var(--mono)">(${mx.toFixed(2)},${my.toFixed(2)})</text>
+      <text x="90" y="175" text-anchor="middle" font-size="9" fill="var(--muted)" font-family="var(--font)">z=${mz.toFixed(2)} (depth)</text>
+    `;
+
+    // UE diagram: X forward (represented going up in 2D), Y right, Z up
+    const ueSvg = document.getElementById('ue-axis-svg');
+    const nUeX = M.mapRange(ue.X, -50, 50, 160, 20);
+    const nUeY = M.mapRange(ue.Y, -100, 100, 20, 160);
+
+    ueSvg.innerHTML = `
+      <text x="90" y="16" text-anchor="middle" font-size="10" fill="var(--muted)" font-family="var(--mono)">world space (top view)</text>
+      <line x1="20" y1="90" x2="160" y2="90" stroke="var(--dim)" stroke-width="1" stroke-dasharray="3 3"/>
+      <line x1="90" y1="20" x2="90" y2="160" stroke="var(--dim)" stroke-width="1" stroke-dasharray="3 3"/>
+      <text x="165" y="94" font-size="10" fill="var(--green)" font-family="var(--mono)">Y+</text>
+      <text x="88" y="18" text-anchor="middle" font-size="10" fill="var(--accent)" font-family="var(--mono)">X+</text>
+      <circle cx="${nUeY}" cy="${nUeX}" r="6" fill="var(--amber)" opacity="0.9"/>
+      <text x="${nUeY+8}" y="${nUeX-4}" font-size="9" fill="var(--amber)" font-family="var(--mono)">(${ue.X.toFixed(0)},${ue.Y.toFixed(0)})</text>
+      <text x="90" y="175" text-anchor="middle" font-size="9" fill="var(--muted)" font-family="var(--font)">Z=${ue.Z.toFixed(1)} cm (up/down)</text>
+    `;
+  }
+
+  ['cs-x','cs-y','cs-z'].forEach(id => document.getElementById(id).addEventListener('input', updateCoordSpace));
+  updateCoordSpace();
+
+  // ════════════════════════════════════════════════════════════
+  // TAB 4 — Rotations
+  // ════════════════════════════════════════════════════════════
+  let rotPts = {
+    root:  {x:100, y:240},
+    joint: {x:160, y:140},
+    tip:   {x:240, y:220},
+  };
+  let rotDragging = null;
+  let emaSmoothing = true;
+  let emaNoising = false;
+  let emaRawHistory = [], emaSmHistory = [];
+  let emaPrev = 0, emaAnimId = null;
+  const EMA_HISTORY = 280;
+
+  const rotSvg = document.getElementById('rot-svg');
+
+  function updateRotation() {
+    const {root, joint, tip} = rotPts;
+    document.getElementById('rot-line1').setAttribute('x1', root.x);
+    document.getElementById('rot-line1').setAttribute('y1', root.y);
+    document.getElementById('rot-line1').setAttribute('x2', joint.x);
+    document.getElementById('rot-line1').setAttribute('y2', joint.y);
+    document.getElementById('rot-line2').setAttribute('x1', joint.x);
+    document.getElementById('rot-line2').setAttribute('y1', joint.y);
+    document.getElementById('rot-line2').setAttribute('x2', tip.x);
+    document.getElementById('rot-line2').setAttribute('y2', tip.y);
+
+    ['root','joint','tip'].forEach(k => {
+      const el = document.getElementById(`rot-${k}`);
+      if (el) { el.setAttribute('cx', rotPts[k].x); el.setAttribute('cy', rotPts[k].y); }
+    });
+
+    const r3 = p => ({x: p.x, y: p.y, z: 0});
+    const angle = M.jointAngleDeg(r3(root), r3(joint), r3(tip));
+
+    // Arc
+    const toRoot = M.vec3normalize(M.vec3sub(r3(root), r3(joint)));
+    const toTip  = M.vec3normalize(M.vec3sub(r3(tip),  r3(joint)));
+    const arc = document.getElementById('rot-arc');
+    const R = 28;
+    const a1 = Math.atan2(toRoot.y, toRoot.x);
+    const a2 = Math.atan2(toTip.y,  toTip.x);
+    const sx = joint.x + R * Math.cos(a1);
+    const sy = joint.y + R * Math.sin(a1);
+    const ex = joint.x + R * Math.cos(a2);
+    const ey = joint.y + R * Math.sin(a2);
+    const large = Math.abs(angle) > 180 ? 1 : 0;
+    const sweep = ((a2 - a1 + 3 * Math.PI) % (2 * Math.PI)) > Math.PI ? 0 : 1;
+    arc.setAttribute('d', `M ${sx} ${sy} A ${R} ${R} 0 ${large} ${sweep} ${ex} ${ey}`);
+
+    const atEl = document.getElementById('rot-angle-text');
+    const midAngle = (a1 + a2) / 2;
+    atEl.setAttribute('x', joint.x + 44 * Math.cos(midAngle));
+    atEl.setAttribute('y', joint.y + 44 * Math.sin(midAngle));
+    atEl.textContent = angle.toFixed(1) + '°';
+
+    document.getElementById('rot-joint-lbl').setAttribute('x', joint.x);
+    document.getElementById('rot-joint-lbl').setAttribute('y', joint.y - 14);
+    document.getElementById('rot-joint-lbl').textContent = 'Joint';
+
+    document.getElementById('rot-angle-val').textContent = angle.toFixed(1) + '°';
+
+    // FK rotator: use directionToRotator on the root→tip limb direction.
+    // Map 2D SVG coordinates to UE-like axes:
+    //   SVG right (+x) → UE Y (right)
+    //   SVG down  (+y) → UE Z-negative (down in UE is -Z)
+    // UE X (forward/depth) is 0 since this is a 2D canvas.
+    const limb = M.directionToRotator({ x: 0, y: tip.x - root.x, z: -(tip.y - root.y) });
+    document.getElementById('rot-ue-pitch').textContent = limb.pitch.toFixed(1) + '°';
+    document.getElementById('rot-ue-yaw').textContent   = limb.yaw.toFixed(1)   + '°';
+  }
+
+  // Drag interaction
+  ['root','joint','tip'].forEach(k => {
+    const el = document.getElementById(`rot-${k}`);
+    if (!el) return;
+    el.addEventListener('pointerdown', e => {
+      rotDragging = k;
+      el.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    });
+  });
+  rotSvg.addEventListener('pointermove', e => {
+    if (!rotDragging) return;
+    const rect = rotSvg.getBoundingClientRect();
+    const scaleX = 320 / rect.width;
+    const scaleY = 320 / rect.height;
+    rotPts[rotDragging] = {
+      x: M.clamp((e.clientX - rect.left) * scaleX, 10, 310),
+      y: M.clamp((e.clientY - rect.top)  * scaleY, 10, 310),
+    };
+    updateRotation();
+  });
+  rotSvg.addEventListener('pointerup', () => { rotDragging = null; });
+  updateRotation();
+
+  // EMA smoothing graph
+  const emaAlphaEl = document.getElementById('ema-alpha');
+  const emaAlphaVEl = document.getElementById('ema-alpha-v');
+  emaAlphaEl.addEventListener('input', () => { emaAlphaVEl.textContent = parseFloat(emaAlphaEl.value).toFixed(2); });
+
+  function drawEmaGraph() {
+    const svgEl = document.getElementById('ema-graph');
+    const W = 280, H = 80;
+    if (!emaRawHistory.length) return;
+    const toSvgY = v => M.mapRange(v, -1, 1, H - 4, 4);
+    const step = W / EMA_HISTORY;
+    let rawPath = '', smPath = '';
+    emaRawHistory.forEach((v, i) => {
+      const x = i * step;
+      rawPath += (i === 0 ? 'M' : 'L') + x.toFixed(1) + ' ' + toSvgY(v).toFixed(1);
+    });
+    emaSmHistory.forEach((v, i) => {
+      const x = i * step;
+      smPath += (i === 0 ? 'M' : 'L') + x.toFixed(1) + ' ' + toSvgY(v).toFixed(1);
+    });
+    svgEl.innerHTML = `
+      <path d="${rawPath}" stroke="var(--red)" stroke-width="1.2" fill="none" opacity="0.7"/>
+      <path d="${smPath}"  stroke="var(--accent)" stroke-width="1.8" fill="none"/>
+    `;
+  }
+
+  let emaTick = 0;
+  function emaStep() {
+    if (!emaNoising) { emaAnimId = requestAnimationFrame(emaStep); return; }
+    emaTick += 0.06;
+    const raw = Math.sin(emaTick) + (Math.random() - 0.5) * 0.8;
+    const alpha = parseFloat(emaAlphaEl.value);
+    const sm = emaSmoothing
+      ? M.ema3({x:raw,y:0,z:0}, {x:emaPrev,y:0,z:0}, alpha).x
+      : raw;
+    emaPrev = sm;
+    emaRawHistory.push(raw);
+    emaSmHistory.push(sm);
+    if (emaRawHistory.length > EMA_HISTORY) emaRawHistory.shift();
+    if (emaSmHistory.length  > EMA_HISTORY) emaSmHistory.shift();
+    drawEmaGraph();
+    emaAnimId = requestAnimationFrame(emaStep);
+  }
+
+  document.getElementById('ema-noise-btn').addEventListener('click', function() {
+    emaNoising = !emaNoising;
+    this.textContent = emaNoising ? 'Stop animation' : 'Animate noisy signal';
+    this.classList.toggle('on', emaNoising);
+    if (emaNoising && !emaAnimId) emaAnimId = requestAnimationFrame(emaStep);
+  });
+
+  document.getElementById('ema-toggle-btn').addEventListener('click', function() {
+    emaSmoothing = !emaSmoothing;
+    this.textContent = emaSmoothing ? 'Smoothing ON' : 'Smoothing OFF';
+    this.classList.toggle('on', emaSmoothing);
+    emaPrev = 0; emaRawHistory = []; emaSmHistory = [];
+  });
+
+  emaAnimId = requestAnimationFrame(emaStep);
+
+  // ════════════════════════════════════════════════════════════
+  // TAB 5 — Gestures
+  // ════════════════════════════════════════════════════════════
+  const GESTURE_DEFS = [
+    {
+      id:'attack', name:'Attack', color:'var(--red)',
+      desc:'Raise your right wrist above your right shoulder. The sword swing.',
+      icon:'⚔️',
+      sliders:[
+        {label:'R shoulder Y', key:'rs_y', min:0.1, max:0.9, val:0.28, target:'rShoulder.y'},
+        {label:'R wrist Y',    key:'rw_y', min:0.1, max:0.9, val:0.15, target:'rWrist.y'},
+      ],
+      detect(vals) {
+        const lm = makeLm(vals);
+        return M.detectAttack(lm);
+      },
+      pythonCond:`rWrist.y < rShoulder.y - 0.05  # wrist above shoulder`,
+    },
+    {
+      id:'guard', name:'Guard', color:'var(--amber)',
+      desc:'Hold both wrists at chin height. Raises your shield or weapon into a blocking stance.',
+      icon:'🛡️',
+      sliders:[
+        {label:'Nose Y',    key:'nose_y',  min:0.02, max:0.4, val:0.07,  target:'nose.y'},
+        {label:'L wrist Y', key:'lw_y',   min:0.02, max:0.6, val:0.10,  target:'lWrist.y'},
+        {label:'R wrist Y', key:'rw_y',   min:0.02, max:0.6, val:0.10,  target:'rWrist.y'},
+      ],
+      detect(vals) {
+        const lm = makeLm(vals);
+        return M.detectGuard(lm);
+      },
+      pythonCond:`abs(lWrist.y - chinY) < 0.08 and\nabs(rWrist.y - chinY) < 0.08`,
+    },
+    {
+      id:'dodge', name:'Dodge', color:'var(--purple)',
+      desc:'Lean your torso left or right. Your character performs the signature soulslike roll.',
+      icon:'💨',
+      sliders:[
+        {label:'L shoulder X', key:'ls_x', min:0.1, max:0.9, val:0.25, target:'lShoulder.x'},
+        {label:'R shoulder X', key:'rs_x', min:0.1, max:0.9, val:0.75, target:'rShoulder.x'},
+      ],
+      detect(vals) {
+        const lm = makeLm(vals);
+        return M.detectDodge(lm);
+      },
+      pythonCond:`abs((lShoulder.x + rShoulder.x)/2 - 0.5) > 0.08`,
+    },
+    {
+      id:'crouch', name:'Crouch', color:'var(--green)',
+      desc:'Hunch down — compress your torso height. Enters stealth or reduces hitbox.',
+      icon:'🦆',
+      sliders:[
+        {label:'L shoulder Y', key:'ls_y', min:0.1, max:0.9, val:0.28, target:'lShoulder.y'},
+        {label:'R shoulder Y', key:'rs_y', min:0.1, max:0.9, val:0.28, target:'rShoulder.y'},
+        {label:'L hip Y',      key:'lh_y', min:0.1, max:0.9, val:0.55, target:'lHip.y'},
+        {label:'R hip Y',      key:'rh_y', min:0.1, max:0.9, val:0.55, target:'rHip.y'},
+      ],
+      detect(vals) {
+        const lm = makeLm(vals);
+        return M.detectCrouch(lm);
+      },
+      pythonCond:`torso_height / shoulder_width < 0.85`,
+    },
+  ];
+
+  function makeLm(vals) {
+    const base = LM_DEFAULT.map(p => ({...p}));
+    if (vals.rs_y  != null) base[12].y = vals.rs_y;
+    if (vals.rw_y  != null) base[16].y = vals.rw_y;
+    if (vals.nose_y!= null) base[0].y  = vals.nose_y;
+    if (vals.lw_y  != null) base[15].y = vals.lw_y;
+    if (vals.ls_x  != null) base[11].x = vals.ls_x;
+    if (vals.rs_x  != null) base[12].x = vals.rs_x;
+    if (vals.ls_y  != null) base[11].y = vals.ls_y;
+    if (vals.lh_y  != null) base[23].y = vals.lh_y;
+    if (vals.rh_y  != null) base[24].y = vals.rh_y;
+    return base;
+  }
+
+  const grid = document.getElementById('gesture-grid');
+  GESTURE_DEFS.forEach(g => {
+    const vals = {};
+    g.sliders.forEach(s => { vals[s.key] = s.val; });
+
+    const card = document.createElement('div');
+    card.className = 'gesture-card';
+    card.id = `gc-${g.id}`;
+
+    const slidersHtml = g.sliders.map(s => `
+      <div class="ctrl-row">
+        <span class="ctrl-label">${s.label}</span>
+        <input class="slider" id="gs-${g.id}-${s.key}" type="range"
+               min="${s.min}" max="${s.max}" step="0.01" value="${s.val}"/>
+        <span class="val" id="gv-${g.id}-${s.key}">${s.val.toFixed(2)}</span>
+      </div>`).join('');
+
+    card.innerHTML = `
+      <div class="gesture-name">${g.icon} ${g.name}</div>
+      <div class="gesture-desc">${g.desc}</div>
+      ${slidersHtml}
+      <div style="margin-top:10px;display:flex;align-items:center;gap:12px">
+        <span class="gesture-status" id="gst-${g.id}">IDLE</span>
+        <code style="font-family:var(--mono);font-size:11px;color:var(--muted)">${g.pythonCond}</code>
+      </div>
+    `;
+    grid.appendChild(card);
+
+    function updateGesture() {
+      const triggered = g.detect(vals);
+      card.classList.toggle('triggered', triggered);
+      const st = document.getElementById(`gst-${g.id}`);
+      st.textContent  = triggered ? 'TRIGGERED' : 'IDLE';
+      st.classList.toggle('on', triggered);
+    }
+
+    g.sliders.forEach(s => {
+      const sl = document.getElementById(`gs-${g.id}-${s.key}`);
+      const vl = document.getElementById(`gv-${g.id}-${s.key}`);
+      sl.addEventListener('input', () => {
+        vals[s.key] = parseFloat(sl.value);
+        vl.textContent = vals[s.key].toFixed(2);
+        updateGesture();
+      });
+    });
+
+    updateGesture();
+  });
+
+  // ════════════════════════════════════════════════════════════
+  // TAB 6 — Python Code
+  // ════════════════════════════════════════════════════════════
+  const CODE_BLOCKS = [
+    {
+      lang: 'python',
+      label: 'bridge.py — main loop',
+      code: `import cv2
+import mediapipe as mp
+import socket, json, time
+
+# ── Config ──────────────────────────────────
+HOST, PORT = '127.0.0.1', 7000
+CAP_INDEX   = 0
+SMOOTH_ALPHA = 0.35   # EMA blend: lower = smoother but laggier
+
+# ── Init ─────────────────────────────────────
+mp_pose = mp.solutions.pose
+pose    = mp_pose.Pose(
+    static_image_mode=False,
+    model_complexity=1,       # 0=fast, 1=balanced, 2=accurate
+    enable_segmentation=False,
+    min_detection_confidence=0.6,
+    min_tracking_confidence=0.5,
+)
+cap = cv2.VideoCapture(CAP_INDEX)
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+prev_lm = None   # for EMA smoothing
+
+def mp_to_ue(x, y, z):
+    """Convert MediaPipe normalized landmark to UE world-space (cm)."""
+    return {'X': -z * 100, 'Y': -(x - 0.5) * 200, 'Z': -(y - 0.5) * 200}
+
+def ema(curr, prev, alpha=SMOOTH_ALPHA):
+    """Exponential moving average per axis."""
+    if prev is None:
+        return curr
+    return {k: prev[k] + alpha * (curr[k] - prev[k]) for k in curr}
+
+def detect_gesture(lm):
+    """Return active soulslike action or None."""
+    rw, rs = lm[16], lm[12]   # right wrist, right shoulder
+    lw, ls = lm[15], lm[11]   # left wrist, left shoulder
+    lh, rh = lm[23], lm[24]   # hips
+    nose    = lm[0]
+
+    chin_y = (nose.y + (lm[9].y + lm[10].y) / 2) / 2
+
+    # Attack: right wrist raised above shoulder
+    if rs.y - rw.y > 0.05:
+        return 'ATTACK'
+    # Guard: both wrists at chin level
+    if abs(lw.y - chin_y) < 0.08 and abs(rw.y - chin_y) < 0.08:
+        return 'GUARD'
+    # Dodge: torso leans left or right
+    mid_x = (ls.x + rs.x) / 2
+    if abs(mid_x - 0.5) > 0.08:
+        return 'DODGE'
+    # Crouch: compressed torso height
+    shoulder_w  = abs(ls.x - rs.x)
+    torso_h     = ((lh.y + rh.y) / 2) - ((ls.y + rs.y) / 2)
+    if shoulder_w > 1e-4 and torso_h / shoulder_w < 0.85:
+        return 'CROUCH'
+    return None
+
+while cap.isOpened():
+    ret, frame = cap.read()
+    if not ret:
+        break
+
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    results = pose.process(rgb)
+
+    if results.pose_landmarks:
+        raw_lm = results.pose_landmarks.landmark
+
+        # Build and smooth UE landmark positions
+        ue_lm = []
+        for i, lm in enumerate(raw_lm):
+            raw_ue = mp_to_ue(lm.x, lm.y, lm.z)
+            if prev_lm:
+                raw_ue = ema(raw_ue, prev_lm[i])
+            ue_lm.append(raw_ue)
+        prev_lm = ue_lm
+
+        gesture = detect_gesture(raw_lm)
+
+        payload = json.dumps({
+            'gesture':   gesture,
+            'landmarks': ue_lm,
+            'ts':        time.time(),
+        })
+        sock.sendto(payload.encode(), (HOST, PORT))
+
+    # Optional: show webcam feed
+    cv2.imshow('MediaPipe Bridge', frame)
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
+`,
+    },
+    {
+      lang: 'text',
+      label: 'requirements.txt',
+      code: `mediapipe>=0.10.0
+opencv-python>=4.8.0
+`,
+    },
+  ];
+
+  const codeContainer = document.getElementById('code-blocks');
+  CODE_BLOCKS.forEach(block => {
+    const wrap = document.createElement('div');
+    wrap.className = 'code-wrap';
+    wrap.style.marginBottom = '16px';
+    wrap.innerHTML = `
+      <div class="code-header">
+        <span class="code-lang">${block.lang}</span>
+        <span style="color:var(--muted);font-size:12px">${block.label}</span>
+        <button class="copy-btn" data-copy="${encodeURIComponent(block.code)}">Copy</button>
+      </div>
+      <pre class="code">${escapeHtml(block.code)}</pre>
+    `;
+    codeContainer.appendChild(wrap);
+  });
+
+  document.querySelectorAll('.copy-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      navigator.clipboard.writeText(decodeURIComponent(btn.dataset.copy)).then(() => {
+        const orig = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(() => { btn.textContent = orig; }, 1500);
+      }).catch(() => {});
+    });
+  });
+
+  function escapeHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  // ════════════════════════════════════════════════════════════
+  // TAB 7 — Free Tools
+  // ════════════════════════════════════════════════════════════
+  const TOOLS = [
+    {
+      icon:'🤸', name:'MediaPipe',
+      desc:'Google\'s BlazePose model — 33 3-D landmarks at 30–60 fps on CPU. The backbone of the entire pipeline. pip install mediapipe.',
+      badges:['free','Apache 2.0'],
+      url:'https://google.github.io/mediapipe/',
+      stage:'Pose Detection',
+    },
+    {
+      icon:'📷', name:'OpenCV (opencv-python)',
+      desc:'Industry-standard computer vision library. Used here purely for webcam frame capture (VideoCapture) and optional debug display.',
+      badges:['free','BSD'],
+      url:'https://pypi.org/project/opencv-python/',
+      stage:'Webcam',
+    },
+    {
+      icon:'🎮', name:'Unreal Engine 5',
+      desc:'The game engine. Free to use; 5% royalty applies only after $1 M lifetime gross revenue. Includes OSC Plugin, LiveLink, and Remote Control API — all needed here.',
+      badges:['free*','royalty model'],
+      url:'https://www.unrealengine.com/',
+      stage:'Game Engine',
+    },
+    {
+      icon:'📡', name:'UE OSC Plugin (built-in)',
+      desc:'Built into UE5 — enable in the Plugins menu. Receive named OSC addresses like /soulslike/gesture directly in Blueprints. Use with python-osc on the Python side.',
+      badges:['free','built-in UE5'],
+      url:'https://docs.unrealengine.com/5.0/en-US/osc-plugin-overview-for-unreal-engine/',
+      stage:'Communication',
+    },
+    {
+      icon:'🔗', name:'python-osc',
+      desc:'Pure-Python OSC library. Alternative to raw UDP — gives you named message addresses. pip install python-osc. Pairs with UE\'s OSC Plugin.',
+      badges:['free','LGPL'],
+      url:'https://pypi.org/project/python-osc/',
+      stage:'Communication',
+    },
+    {
+      icon:'🎬', name:'UE LiveLink (built-in)',
+      desc:'Unreal\'s official protocol for streaming live animation data. Built into UE5. Best for driving individual bones/joints in real time rather than gesture strings.',
+      badges:['free','built-in UE5'],
+      url:'https://docs.unrealengine.com/5.0/en-US/live-link-in-unreal-engine/',
+      stage:'Character Animation',
+    },
+    {
+      icon:'🕹️', name:'UE Remote Control API (built-in)',
+      desc:'HTTP + WebSocket API to drive any Blueprint variable or function from outside UE. Good for prototyping: Python can POST {"gesture":"ATTACK"} with zero Blueprint socket code.',
+      badges:['free','built-in UE5'],
+      url:'https://docs.unrealengine.com/5.0/en-US/remote-control-api-for-unreal-engine/',
+      stage:'Communication',
+    },
+    {
+      icon:'📐', name:'Kalidokit (npm)',
+      desc:'JS library that converts MediaPipe face/pose/hand landmarks to VRM-compatible bone rotations. Useful as a reference implementation for quaternion math — the logic ports directly to Python or Blueprint.',
+      badges:['free','MIT'],
+      url:'https://github.com/yeemachine/kalidokit',
+      stage:'Reference / Math',
+    },
+    {
+      icon:'🎥', name:'Rokoko Video',
+      desc:'Browser-based motion capture from a single webcam. Free tier gives you animation clips you can import into UE via FBX — great for building reference animations for your soulslike.',
+      badges:['free tier'],
+      url:'https://www.rokoko.com/products/video',
+      stage:'Reference Animations',
+    },
+    {
+      icon:'🌀', name:'Blender',
+      desc:'Free 3-D suite. Use it to preview retargeted animations on your character skeleton before exporting to UE. The Auto-Rig Pro addon (paid) or Rigify (free/built-in) can rig imported characters.',
+      badges:['free','GPL'],
+      url:'https://www.blender.org/',
+      stage:'Animation Preview',
+    },
+    {
+      icon:'🔬', name:'Pose2Sim',
+      desc:'Open-source research tool that converts multi-camera MediaPipe output to 3-D skeletal motion (BVH/TRC). Overkill for games but excellent if you want true metric 3-D positions.',
+      badges:['free','Apache 2.0'],
+      url:'https://github.com/perfanalytics/pose2sim',
+      stage:'Advanced / Research',
+    },
+  ];
+
+  const toolList = document.getElementById('tool-list');
+  TOOLS.forEach(t => {
+    const row = document.createElement('div');
+    row.className = 'tool-row';
+    const badgesHtml = t.badges.map(b => {
+      const cls = b.includes('free') ? 'badge-free' : b.includes('UE') || b.includes('built-in') ? 'badge-ue' : 'badge-royalty';
+      return `<span class="badge ${cls}">${b}</span>`;
+    }).join('');
+    row.innerHTML = `
+      <div class="tool-icon">${t.icon}</div>
+      <div class="tool-body">
+        <div class="tool-name">${t.name}</div>
+        <div class="tool-desc">${t.desc}</div>
+        <div class="tool-meta">
+          ${badgesHtml}
+          <span class="badge" style="background:var(--surface2);color:var(--muted);border:1px solid var(--border)">${t.stage}</span>
+        </div>
+        <a class="tool-link" href="${t.url}" target="_blank" rel="noopener">${t.url.replace(/^https?:\/\//,'')}</a>
+      </div>
+    `;
+    toolList.appendChild(row);
+  });
+
+
+  // ════════════════════════════════════════════════════════════
+  // TAB 8 — 3D Skeleton Lab
+  // ════════════════════════════════════════════════════════════
+  (function () {
+    const canvas = document.getElementById('skel3d');
+    const ctx    = canvas.getContext('2d');
+
+    // ── LM names (shared) ─────────────────────────────────────
+    const LM_NAMES_3D = [
+      'NOSE','L_EYE_IN','L_EYE','L_EYE_OUT','R_EYE_IN','R_EYE','R_EYE_OUT',
+      'L_EAR','R_EAR','MOUTH_L','MOUTH_R',
+      'L_SHOULDER','R_SHOULDER','L_ELBOW','R_ELBOW',
+      'L_WRIST','R_WRIST','L_PINKY','R_PINKY','L_INDEX','R_INDEX','L_THUMB','R_THUMB',
+      'L_HIP','R_HIP','L_KNEE','R_KNEE','L_ANKLE','R_ANKLE',
+      'L_HEEL','R_HEEL','L_FOOT_IDX','R_FOOT_IDX',
+    ];
+
+    // ── Default T-pose landmarks (MediaPipe normalized space) ──
+    const defaultPose = () => [
+      {x:.500,y:.070,z:.00}, // 0 NOSE
+      {x:.462,y:.090,z:.00}, // 1
+      {x:.440,y:.090,z:.00}, // 2
+      {x:.418,y:.090,z:.00}, // 3
+      {x:.538,y:.090,z:.00}, // 4
+      {x:.560,y:.090,z:.00}, // 5
+      {x:.582,y:.090,z:.00}, // 6
+      {x:.400,y:.110,z:.00}, // 7
+      {x:.600,y:.110,z:.00}, // 8
+      {x:.468,y:.130,z:.00}, // 9
+      {x:.532,y:.130,z:.00}, // 10
+      {x:.340,y:.280,z:.00}, // 11 L_SHOULDER
+      {x:.660,y:.280,z:.00}, // 12 R_SHOULDER
+      {x:.200,y:.430,z:.00}, // 13 L_ELBOW
+      {x:.800,y:.430,z:.00}, // 14 R_ELBOW
+      {x:.080,y:.570,z:.00}, // 15 L_WRIST
+      {x:.920,y:.570,z:.00}, // 16 R_WRIST
+      {x:.060,y:.630,z:.00}, // 17
+      {x:.940,y:.630,z:.00}, // 18
+      {x:.055,y:.610,z:.00}, // 19
+      {x:.945,y:.610,z:.00}, // 20
+      {x:.075,y:.590,z:.00}, // 21
+      {x:.925,y:.590,z:.00}, // 22
+      {x:.380,y:.560,z:.00}, // 23 L_HIP
+      {x:.620,y:.560,z:.00}, // 24 R_HIP
+      {x:.370,y:.730,z:.00}, // 25 L_KNEE
+      {x:.630,y:.730,z:.00}, // 26 R_KNEE
+      {x:.360,y:.890,z:.00}, // 27 L_ANKLE
+      {x:.640,y:.890,z:.00}, // 28 R_ANKLE
+      {x:.350,y:.930,z:.00}, // 29
+      {x:.650,y:.930,z:.00}, // 30
+      {x:.330,y:.970,z:.00}, // 31
+      {x:.670,y:.970,z:.00}, // 32
+    ];
+
+    // ── Bone connectivity [a, b] ──────────────────────────────
+    const BONES = [
+      [0,9],[0,10],[7,11],[8,12],
+      [9,10],[11,12],
+      [11,13],[13,15],[12,14],[14,16],
+      [15,17],[15,19],[15,21],[16,18],[16,20],[16,22],
+      [11,23],[12,24],[23,24],
+      [23,25],[25,27],[27,29],[27,31],
+      [24,26],[26,28],[28,30],[28,32],
+    ];
+
+    // Bone color groups
+    const BONE_COLOR = {
+      arm_l:'#5b9cf6', arm_r:'#a78bfa',
+      leg_l:'#4ade80', leg_r:'#fb923c',
+      spine:'#fbbf24', face:'#7b879e',
+    };
+    function boneColor(a, b) {
+      if ([11,13,15,17,19,21].includes(a) || [11,13,15,17,19,21].includes(b)) return BONE_COLOR.arm_l;
+      if ([12,14,16,18,20,22].includes(a) || [12,14,16,18,20,22].includes(b)) return BONE_COLOR.arm_r;
+      if ([23,25,27,29,31].includes(a) || [23,25,27,29,31].includes(b)) return BONE_COLOR.leg_l;
+      if ([24,26,28,30,32].includes(a) || [24,26,28,30,32].includes(b)) return BONE_COLOR.leg_r;
+      if ([11,12,23,24].every(x => ![a,b].includes(x)) && (a<=10||b<=10)) return BONE_COLOR.face;
+      return BONE_COLOR.spine;
+    }
+
+    // ── Bone angle definitions [root, joint, tip, label] ──────
+    const BONE_ANGLES = [
+      [11, 13, 15, 'L Elbow'],
+      [12, 14, 16, 'R Elbow'],
+      [13, 11, 23, 'L Shoulder'],
+      [14, 12, 24, 'R Shoulder'],
+      [11, 23, 25, 'L Hip'],
+      [12, 24, 26, 'R Hip'],
+      [23, 25, 27, 'L Knee'],
+      [24, 26, 28, 'R Knee'],
+      [23, 11, 12, 'Shoulder (spread)'],
+      [11, 12, 24, 'R Torso tilt'],
+      [12, 11, 23, 'L Torso tilt'],
+      [25, 27, 29, 'L Ankle'],
+      [26, 28, 30, 'R Ankle'],
+    ];
+
+    // ── Bone direction definitions [parent, child, label] ─────
+    const BONE_DIRS = [
+      [11, 13, 'L Upper Arm'],
+      [13, 15, 'L Forearm'],
+      [12, 14, 'R Upper Arm'],
+      [14, 16, 'R Forearm'],
+      [11, 23, 'L Torso'],
+      [12, 24, 'R Torso'],
+      [23, 25, 'L Thigh'],
+      [25, 27, 'L Shin'],
+      [24, 26, 'R Thigh'],
+      [26, 28, 'R Shin'],
+    ];
+
+    // ── State ─────────────────────────────────────────────────
+    let lm3d       = defaultPose();
+    let camTheta   = 0.3;    // orbit yaw (radians)
+    let camPhi     = -0.2;   // orbit pitch (radians)
+    let selJoint   = -1;
+    let selBone    = -1;     // index into BONE_ANGLES
+    let isDragging = false;
+    let lastMouse  = {x:0, y:0};
+    const SCALE    = 1.8;    // visual scale factor
+
+    // ── Coordinate helpers ────────────────────────────────────
+    // Convert MP landmark to centered body-space: x→[-.5..+.5], y→[+.5..-.5], z
+    function toBody(p) {
+      return { x: p.x - 0.5, y: -(p.y - 0.5), z: p.z };
+    }
+
+    // Apply camera orbit rotation
+    function applyCamera(b) {
+      // Yaw around Y axis
+      const cosT = Math.cos(camTheta), sinT = Math.sin(camTheta);
+      const rx = b.x * cosT + b.z * sinT;
+      const rz = -b.x * sinT + b.z * cosT;
+      // Pitch around X axis
+      const cosPhi = Math.cos(camPhi), sinPhi = Math.sin(camPhi);
+      const ry = b.y * cosPhi - rz * sinPhi;
+      const rz2 = b.y * sinPhi + rz * cosPhi;
+      return {x: rx, y: ry, z: rz2};
+    }
+
+    // Perspective project to canvas pixels
+    function project(p) {
+      const W = canvas.width, H = canvas.height;
+      const b = applyCamera(toBody(p));
+      const d = 2.5; // focal distance
+      const scale = (W * 0.42 * SCALE) / (d + b.z + 0.001);
+      return {
+        sx: W / 2 + b.x * scale,
+        sy: H / 2 - b.y * scale,
+        sz: b.z,
+      };
+    }
+
+    // ── Resize canvas to match CSS size ──────────────────────
+    function resizeCanvas() {
+      const rect = canvas.parentElement.getBoundingClientRect();
+      const dpr  = window.devicePixelRatio || 1;
+      const w    = Math.max(rect.width,  300);
+      const h    = Math.max(rect.height, 300);
+      if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+        canvas.width  = Math.round(w * dpr);
+        canvas.height = Math.round(h * dpr);
+        ctx.scale(dpr, dpr);
+      }
+    }
+
+    // ── Draw ──────────────────────────────────────────────────
+    function draw() {
+      resizeCanvas();
+      const W = canvas.width  / (window.devicePixelRatio || 1);
+      const H = canvas.height / (window.devicePixelRatio || 1);
+      ctx.clearRect(0, 0, W, H);
+
+      // Project all joints
+      const proj = lm3d.map(p => project(p));
+
+      // Sort bones by average z for depth (painter's algorithm)
+      const sortedBones = BONES.map(([a,b]) => ({
+        a, b,
+        z: (proj[a].sz + proj[b].sz) / 2,
+        color: boneColor(a, b),
+      })).sort((a, b) => b.z - a.z);
+
+      // Draw bones
+      sortedBones.forEach(({a, b, color}) => {
+        const pa = proj[a], pb = proj[b];
+        ctx.beginPath();
+        ctx.moveTo(pa.sx, pa.sy);
+        ctx.lineTo(pb.sx, pb.sy);
+        ctx.strokeStyle = color;
+        ctx.lineWidth   = 2.5;
+        ctx.globalAlpha = 0.75;
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      });
+
+      // Draw selected bone highlight
+      if (selBone >= 0) {
+        const [root, joint, tip] = BONE_ANGLES[selBone];
+        [[root, joint], [joint, tip]].forEach(([a, b]) => {
+          const pa = proj[a], pb = proj[b];
+          ctx.beginPath();
+          ctx.moveTo(pa.sx, pa.sy);
+          ctx.lineTo(pb.sx, pb.sy);
+          ctx.strokeStyle = '#fff';
+          ctx.lineWidth   = 3.5;
+          ctx.globalAlpha = 0.5;
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+        });
+        // Draw arc at joint
+        const pj = proj[joint];
+        const pr = proj[root];
+        const pt = proj[tip];
+        const a1 = Math.atan2(pr.sy - pj.sy, pr.sx - pj.sx);
+        const a2 = Math.atan2(pt.sy - pj.sy, pt.sx - pj.sx);
+        ctx.beginPath();
+        ctx.arc(pj.sx, pj.sy, 18, Math.min(a1,a2), Math.max(a1,a2));
+        ctx.strokeStyle = '#fbbf24';
+        ctx.lineWidth   = 1.5;
+        ctx.stroke();
+      }
+
+      // Draw grid / floor
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+      ctx.lineWidth   = 1;
+      for (let i = -4; i <= 4; i++) {
+        const p1 = project({x: i*0.125 + 0.5, y: 0.97, z: -0.4});
+        const p2 = project({x: i*0.125 + 0.5, y: 0.97, z:  0.4});
+        const p3 = project({x: 0.1,  y: 0.97, z: i*0.1});
+        const p4 = project({x: 0.9,  y: 0.97, z: i*0.1});
+        ctx.beginPath(); ctx.moveTo(p1.sx, p1.sy); ctx.lineTo(p2.sx, p2.sy); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(p3.sx, p3.sy); ctx.lineTo(p4.sx, p4.sy); ctx.stroke();
+      }
+      ctx.restore();
+
+      // Draw joints (back-to-front order by z)
+      const sortedJoints = proj
+        .map((p, i) => ({p, i}))
+        .sort((a, b) => b.p.sz - a.p.sz);
+
+      sortedJoints.forEach(({p, i}) => {
+        const isSel = (i === selJoint);
+        const r     = isSel ? 9 : (i <= 10 ? 3.5 : 5);
+        const depth = Math.max(0.3, 1 - (p.sz + 0.4) * 0.7);
+
+        ctx.beginPath();
+        ctx.arc(p.sx, p.sy, r, 0, 2 * Math.PI);
+        ctx.fillStyle   = isSel ? '#fff' : (i <= 10 ? `rgba(123,135,158,${depth})` : `rgba(91,156,246,${depth})`);
+        ctx.strokeStyle = isSel ? '#5b9cf6' : 'rgba(0,0,0,0.4)';
+        ctx.lineWidth   = isSel ? 2.5 : 1;
+        ctx.fill();
+        ctx.stroke();
+
+        // Label for selected or major joints
+        if (isSel || [11,12,13,14,15,16,23,24,25,26,27,28].includes(i)) {
+          ctx.fillStyle = isSel ? '#fff' : 'rgba(200,200,200,0.55)';
+          ctx.font      = isSel ? 'bold 10px system-ui' : '9px system-ui';
+          ctx.fillText(LM_NAMES_3D[i], p.sx + r + 2, p.sy + 3);
+        }
+      });
+
+      // Axes indicator (bottom-left)
+      drawAxesIndicator(W, H);
+    }
+
+    function drawAxesIndicator(W, H) {
+      const cx = 36, cy = H - 36, L = 22;
+      const axes = [
+        {v:{x:1,y:0,z:0}, color:'#f87171', label:'X'},
+        {v:{x:0,y:1,z:0}, color:'#4ade80', label:'Y'},
+        {v:{x:0,y:0,z:-1},color:'#5b9cf6', label:'Z'},
+      ];
+      axes.forEach(({v, color, label}) => {
+        const b  = applyCamera(v);
+        const ex = cx + b.x * L;
+        const ey = cy - b.y * L;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(ex, ey);
+        ctx.strokeStyle = color;
+        ctx.lineWidth   = 1.5;
+        ctx.stroke();
+        ctx.fillStyle = color;
+        ctx.font = 'bold 9px system-ui';
+        ctx.fillText(label, ex + 2, ey + 3);
+      });
+    }
+
+    // ── Bone angle table update ────────────────────────────────
+    function updateBoneTable() {
+      const tbody = document.getElementById('bat-body');
+      tbody.innerHTML = '';
+
+      BONE_ANGLES.forEach(([root, joint, tip, label], idx) => {
+        const r3 = i => ({x: lm3d[i].x, y: lm3d[i].y, z: lm3d[i].z});
+        const angle = M.jointAngleDeg(r3(root), r3(joint), r3(tip));
+
+        // direction of parent→joint segment
+        const ueParent = M.mpToUE(lm3d[root].x, lm3d[root].y, lm3d[root].z);
+        const ueJoint  = M.mpToUE(lm3d[joint].x, lm3d[joint].y, lm3d[joint].z);
+        const dir      = M.vec3sub(
+          {x: ueJoint.X, y: ueJoint.Y, z: ueJoint.Z},
+          {x: ueParent.X, y: ueParent.Y, z: ueParent.Z}
+        );
+        const rot = M.directionToRotator(dir);
+
+        const tr = document.createElement('tr');
+        if (idx === selBone) tr.className = 'sel-bone';
+        tr.innerHTML = `
+          <td>${label}</td>
+          <td class="bat-angle">${angle.toFixed(1)}°</td>
+          <td class="bat-rotator">P:${rot.pitch.toFixed(0)}° Y:${rot.yaw.toFixed(0)}°</td>
+        `;
+        tr.addEventListener('click', () => { selBone = idx; updateBoneTable(); updateFormula(); draw(); });
+        tbody.appendChild(tr);
+      });
+    }
+
+    // ── Formula panel ─────────────────────────────────────────
+    function updateFormula() {
+      const box      = document.getElementById('skel-formula-box');
+      const boneLbl  = document.getElementById('skel-formula-bone');
+      if (selBone < 0) return;
+
+      const [root, joint, tip, label] = BONE_ANGLES[selBone];
+      boneLbl.textContent = label;
+
+      const r = lm3d[root],  jt = lm3d[joint], t = lm3d[tip];
+      const ueR = M.mpToUE(r.x, r.y, r.z);
+      const ueJ = M.mpToUE(jt.x, jt.y, jt.z);
+      const ueT = M.mpToUE(t.x, t.y, t.z);
+      const v1  = M.vec3sub({x:ueR.X,y:ueR.Y,z:ueR.Z}, {x:ueJ.X,y:ueJ.Y,z:ueJ.Z});
+      const v2  = M.vec3sub({x:ueT.X,y:ueT.Y,z:ueT.Z}, {x:ueJ.X,y:ueJ.Y,z:ueJ.Z});
+      const n1  = M.vec3normalize(v1);
+      const n2  = M.vec3normalize(v2);
+      const dot = M.vec3dot(n1, n2);
+      const ang = M.jointAngleDeg(
+        {x:r.x,y:r.y,z:r.z},{x:jt.x,y:jt.y,z:jt.z},{x:t.x,y:t.y,z:t.z}
+      );
+      const dir = M.vec3sub({x:ueJ.X,y:ueJ.Y,z:ueJ.Z},{x:ueR.X,y:ueR.Y,z:ueR.Z});
+      const rot = M.directionToRotator(dir);
+
+      box.innerHTML = `<span class="fc">// Joints: ${LM_NAMES_3D[root]}(${root}) → ${LM_NAMES_3D[joint]}(${joint}) → ${LM_NAMES_3D[tip]}(${tip})</span>
+
+<span class="fc">// Step 1: convert landmarks to UE world-space (cm)</span>
+root_ue  = mpToUE(${r.x.toFixed(3)}, ${r.y.toFixed(3)}, ${r.z.toFixed(3)})
+         = {X:<span class="fv">${ueR.X.toFixed(1)}</span>, Y:<span class="fv">${ueR.Y.toFixed(1)}</span>, Z:<span class="fv">${ueR.Z.toFixed(1)}</span>}
+joint_ue = mpToUE(${jt.x.toFixed(3)}, ${jt.y.toFixed(3)}, ${jt.z.toFixed(3)})
+         = {X:<span class="fv">${ueJ.X.toFixed(1)}</span>, Y:<span class="fv">${ueJ.Y.toFixed(1)}</span>, Z:<span class="fv">${ueJ.Z.toFixed(1)}</span>}
+tip_ue   = mpToUE(${t.x.toFixed(3)}, ${t.y.toFixed(3)}, ${t.z.toFixed(3)})
+         = {X:<span class="fv">${ueT.X.toFixed(1)}</span>, Y:<span class="fv">${ueT.Y.toFixed(1)}</span>, Z:<span class="fv">${ueT.Z.toFixed(1)}</span>}
+
+<span class="fc">// Step 2: direction vectors at joint</span>
+v1 = root_ue − joint_ue = (<span class="fv">${v1.x.toFixed(1)}</span>, <span class="fv">${v1.y.toFixed(1)}</span>, <span class="fv">${v1.z.toFixed(1)}</span>)
+v2 = tip_ue  − joint_ue = (<span class="fv">${v2.x.toFixed(1)}</span>, <span class="fv">${v2.y.toFixed(1)}</span>, <span class="fv">${v2.z.toFixed(1)}</span>)
+
+<span class="fc">// Step 3: dot product of unit vectors → angle</span>
+n1 = normalize(v1) = (<span class="fv">${n1.x.toFixed(3)}</span>, <span class="fv">${n1.y.toFixed(3)}</span>, <span class="fv">${n1.z.toFixed(3)}</span>)
+n2 = normalize(v2) = (<span class="fv">${n2.x.toFixed(3)}</span>, <span class="fv">${n2.y.toFixed(3)}</span>, <span class="fv">${n2.z.toFixed(3)}</span>)
+dot(n1,n2) = <span class="fv">${dot.toFixed(4)}</span>
+<span class="fl">angle = acos(dot) × 180/π = <span class="fv">${ang.toFixed(2)}°</span></span>
+
+<span class="fc">// Step 4: FK rotator for root→joint bone direction</span>
+dir = joint_ue − root_ue = (<span class="fv">${dir.x.toFixed(1)}</span>, <span class="fv">${dir.y.toFixed(1)}</span>, <span class="fv">${dir.z.toFixed(1)}</span>)
+<span class="fl">Pitch = −asin(dir.Z / |dir|) = <span class="fv">${rot.pitch.toFixed(2)}°</span></span>
+<span class="fl">Yaw   = atan2(dir.Y, dir.X)  = <span class="fv">${rot.yaw.toFixed(2)}°</span></span>
+Roll  = 0°  <span class="fc">// not derivable from direction alone</span>`;
+    }
+
+    // ── Joint selection (click) ───────────────────────────────
+    function getCanvasPos(e) {
+      const rect = canvas.getBoundingClientRect();
+      const dpr  = window.devicePixelRatio || 1;
+      return {
+        x: (e.clientX - rect.left),
+        y: (e.clientY - rect.top),
+      };
+    }
+
+    canvas.addEventListener('click', e => {
+      if (Math.abs(e.movementX) > 3 || Math.abs(e.movementY) > 3) return;
+      const pos = getCanvasPos(e);
+      const proj = lm3d.map(p => project(p));
+      let best = -1, bestD = 16;
+      proj.forEach((p, i) => {
+        const d = Math.hypot(p.sx - pos.x, p.sy - pos.y);
+        if (d < bestD) { bestD = d; best = i; }
+      });
+      if (best >= 0) {
+        selJoint = best;
+        updateJointSliders();
+        draw();
+      }
+    });
+
+    // ── Orbit drag ────────────────────────────────────────────
+    canvas.addEventListener('pointerdown', e => {
+      isDragging = true;
+      lastMouse  = {x: e.clientX, y: e.clientY};
+      canvas.setPointerCapture(e.pointerId);
+    });
+    canvas.addEventListener('pointermove', e => {
+      if (!isDragging) return;
+      const dx = e.clientX - lastMouse.x;
+      const dy = e.clientY - lastMouse.y;
+      camTheta += dx * 0.008;
+      camPhi   += dy * 0.008;
+      camPhi    = M.clamp(camPhi, -1.4, 1.4);
+      lastMouse = {x: e.clientX, y: e.clientY};
+      draw();
+    });
+    canvas.addEventListener('pointerup',    () => { isDragging = false; });
+    canvas.addEventListener('pointercancel',() => { isDragging = false; });
+
+    // ── Joint slider controls ─────────────────────────────────
+    function updateJointSliders() {
+      if (selJoint < 0) return;
+      const lm = lm3d[selJoint];
+      document.getElementById('skel-joint-name').textContent = `#${selJoint} ${LM_NAMES_3D[selJoint]}`;
+      ['sj-x','sj-y','sj-z'].forEach(id => document.getElementById(id).disabled = false);
+      document.getElementById('sj-x').value = lm.x;
+      document.getElementById('sj-y').value = lm.y;
+      document.getElementById('sj-z').value = lm.z;
+      document.getElementById('sj-xv').textContent = lm.x.toFixed(3);
+      document.getElementById('sj-yv').textContent = lm.y.toFixed(3);
+      document.getElementById('sj-zv').textContent = lm.z.toFixed(3);
+    }
+
+    function onSliderChange(axis, val) {
+      if (selJoint < 0) return;
+      lm3d[selJoint][axis] = parseFloat(val);
+      document.getElementById(`sj-${axis}v`).textContent = parseFloat(val).toFixed(3);
+      updateBoneTable();
+      if (selBone >= 0) updateFormula();
+      draw();
+    }
+
+    document.getElementById('sj-x').addEventListener('input', e => onSliderChange('x', e.target.value));
+    document.getElementById('sj-y').addEventListener('input', e => onSliderChange('y', e.target.value));
+    document.getElementById('sj-z').addEventListener('input', e => onSliderChange('z', e.target.value));
+
+    // Reset button
+    const resetBtn = document.createElement('button');
+    resetBtn.className = 'btn';
+    resetBtn.textContent = 'Reset to T-pose';
+    resetBtn.style.marginTop = '8px';
+    resetBtn.addEventListener('click', () => {
+      lm3d = defaultPose();
+      if (selJoint >= 0) updateJointSliders();
+      updateBoneTable();
+      if (selBone >= 0) updateFormula();
+      draw();
+    });
+    document.getElementById('skel-sliders').appendChild(resetBtn);
+
+    // ── Init when tab becomes visible ─────────────────────────
+    // Lazy init: only start rendering when the tab is first shown
+    let skelInited = false;
+    function initSkelLab() {
+      if (skelInited) return;
+      skelInited = true;
+      resizeCanvas();
+      updateBoneTable();
+      draw();
+    }
+
+    // Init when the skellab tab is selected
+    document.addEventListener('tabchange', e => {
+      if (e.detail === 'skellab') setTimeout(initSkelLab, 30);
+    });
+
+    // Re-draw on resize
+    window.addEventListener('resize', () => { if (skelInited) draw(); });
+
+  })();
+
+})();
+</script>
+</body>
+</html>

@@ -10,11 +10,13 @@
  *   mountIKDemo           – 2-bone IK foot-plant with terrain slider
  *   mountRootMotion       – in-place vs root-motion toggle
  *   mountSpineDist        – spine bend distribution across 3 vs 5 bones
+ *   mountMediaPipeUeLab   – simulated Pose landmarks → UE vector / yaw-pitch
  *
  * Pure helpers (also exported for testing):
  *   scaleAround           – scale a point around an origin
  *   solveIK2Bone          – law-of-cosines two-bone IK solver
  *   distributeRotation    – spread a total rotation evenly across N bones
+ *   mediaPipeNormalizedToImagePx, hipRelativeVector, mpBasisToUeVector, directionToYawPitchDegrees
  */
 (function attachRetargetInteractives(root) {
   'use strict';
@@ -1226,6 +1228,283 @@
     render(Number(slider.value));
   }
 
+  // ─── MediaPipe → UE: pure helpers + lab ────────────────────────────────
+
+  /**
+   * Convert normalized MediaPipe landmark to image pixel coordinates.
+   * @param {{ x: number; y: number; z: number }} lm
+   * @param {number} width
+   * @param {number} height
+   * @returns {{ x: number; y: number; z: number }}
+   */
+  function mediaPipeNormalizedToImagePx(lm, width, height) {
+    return {
+      x: lm.x * width,
+      y: lm.y * height,
+      z: lm.z * width,
+    };
+  }
+
+  /**
+   * Vector from one landmark to another, optional horizontal mirror (selfie).
+   * @param {{ x: number; y: number; z: number }} origin
+   * @param {{ x: number; y: number; z: number }} other
+   * @param {{ mirrorX?: boolean }} [options]
+   * @returns {{ x: number; y: number; z: number }}
+   */
+  function hipRelativeVector(origin, other, options) {
+    options = options || {};
+    var dx = other.x - origin.x;
+    var dy = other.y - origin.y;
+    var dz = other.z - origin.z;
+    if (options.mirrorX) dx = -dx;
+    return { x: dx, y: dy, z: dz };
+  }
+
+  /**
+   * Map hip-relative MediaPipe-style vector to Unreal-style centimeters.
+   * Default basis: image +x right → UE +Y, image +y down → UE −Z, depth +z → UE +X.
+   * Override with flipX/flipY/flipZ on each output axis (±1).
+   *
+   * @param {{ x: number; y: number; z: number }} v
+   * @param {{ scale?: number; depthGain?: number; flipX?: number; flipY?: number; flipZ?: number }} [options]
+   * @returns {{ x: number; y: number; z: number }}
+   */
+  function mpBasisToUeVector(v, options) {
+    options = options || {};
+    var s = options.scale != null ? options.scale : 1;
+    var dg = options.depthGain != null ? options.depthGain : 1;
+    var fx = options.flipX != null ? options.flipX : 1;
+    var fy = options.flipY != null ? options.flipY : 1;
+    var fz = options.flipZ != null ? options.flipZ : 1;
+    var vx = v.x;
+    var vy = v.y;
+    var vz = v.z * dg;
+    return {
+      x: vz * s * fx,
+      y: vx * s * fy,
+      z: -vy * s * fz,
+    };
+  }
+
+  /**
+   * Simplified yaw/pitch (degrees) from a direction in UE-style axes.
+   * Yaw = atan2(Y, X), pitch = atan2(Z, sqrt(X²+Y²)). Not a full FRotator substitute.
+   *
+   * @param {{ x: number; y: number; z: number }} forward
+   * @returns {{ yaw: number; pitch: number; valid: boolean }}
+   */
+  function directionToYawPitchDegrees(forward) {
+    var fx = forward.x;
+    var fy = forward.y;
+    var fz = forward.z;
+    var len = Math.sqrt(fx * fx + fy * fy + fz * fz);
+    if (len < 1e-10) return { yaw: 0, pitch: 0, valid: false };
+    fx /= len;
+    fy /= len;
+    fz /= len;
+    var yaw = Math.atan2(fy, fx) * (180 / Math.PI);
+    var pitch = Math.atan2(fz, Math.sqrt(fx * fx + fy * fy)) * (180 / Math.PI);
+    return { yaw: yaw, pitch: pitch, valid: true };
+  }
+
+  function mountMediaPipeUeLab(container) {
+    var svgHost = container.querySelector('[data-role="mp-svg"]');
+    var readoutEl = container.querySelector('[data-role="mp-readout"]');
+    var mirrorEl = container.querySelector('[data-role="mp-mirror"]');
+    var depthEl = container.querySelector('[data-role="mp-depth"]');
+    var scaleEl = container.querySelector('[data-role="mp-scale"]');
+    var wristZEl = container.querySelector('[data-role="mp-wrist-z"]');
+    if (!svgHost || !readoutEl) return;
+
+    /** @type {{ x: number; y: number; z: number }} */
+    var hip = { x: 0.5, y: 0.72, z: 0 };
+    /** @type {{ x: number; y: number; z: number }} */
+    var shoulder = { x: 0.48, y: 0.48, z: 0 };
+    /** @type {{ x: number; y: number; z: number }} */
+    var wrist = { x: 0.62, y: 0.42, z: -0.08 };
+
+    var dragIdx = -1;
+    var labels = ['Hip', 'Shoulder', 'Wrist'];
+    var vb = 1;
+    var hitR = 0.06;
+
+    function clamp(v, a, b) {
+      return Math.max(a, Math.min(b, v));
+    }
+
+    function vecLen(v) {
+      return Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+    }
+
+    function normFromClient(svg, ev) {
+      var r = svg.getBoundingClientRect();
+      var cx = ev.clientX;
+      var cy = ev.clientY;
+      var nx = ((cx - r.left) / Math.max(r.width, 1e-6)) * vb;
+      var ny = ((cy - r.top) / Math.max(r.height, 1e-6)) * vb;
+      return { x: clamp(nx, 0.02, 0.98), y: clamp(ny, 0.02, 0.98) };
+    }
+
+    function nearestLandmark(nx, ny) {
+      var pts = [hip, shoulder, wrist];
+      var best = -1;
+      var bestD = 1e9;
+      for (var i = 0; i < pts.length; i++) {
+        var d = Math.sqrt(Math.pow(pts[i].x - nx, 2) + Math.pow(pts[i].y - ny, 2));
+        if (d < bestD) {
+          bestD = d;
+          best = i;
+        }
+      }
+      return bestD <= hitR ? best : -1;
+    }
+
+    function mountSvgStructure() {
+      svgHost.innerHTML =
+        '<svg class="mp-ue-svg" viewBox="0 0 1 1" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">' +
+        '<title>Simulated MediaPipe frame</title>' +
+        '<rect x="0" y="0" width="1" height="1" fill="none" stroke="currentColor" stroke-opacity="0.25" stroke-width="0.004"/>' +
+        '<g data-role="mp-draw"></g>' +
+        '</svg>';
+    }
+
+    function renderFrame() {
+      var svg = svgHost.querySelector('svg');
+      var g = svg && svg.querySelector('[data-role="mp-draw"]');
+      if (!g || !svg) return;
+
+      var mirror = mirrorEl && mirrorEl.checked;
+      var depthGain = depthEl ? Number(depthEl.value) / 100 : 1;
+      var scaleCm = scaleEl ? Number(scaleEl.value) : 100;
+      if (wristZEl) wrist.z = Number(wristZEl.value) / 100;
+
+      var parts = [];
+      parts.push('<line x1="' + hip.x + '" y1="' + hip.y + '" x2="' + shoulder.x + '" y2="' + shoulder.y + '" stroke="currentColor" stroke-opacity="0.35" stroke-width="0.004" stroke-linecap="round"/>');
+      parts.push('<line x1="' + shoulder.x + '" y1="' + shoulder.y + '" x2="' + wrist.x + '" y2="' + wrist.y + '" stroke="currentColor" stroke-opacity="0.5" stroke-width="0.0045" stroke-linecap="round"/>');
+
+      var pts = [hip, shoulder, wrist];
+      var colors = ['rgba(34,197,94,0.9)', 'rgba(59,130,246,0.95)', 'rgba(251,191,36,0.95)'];
+      for (var j = 0; j < 3; j++) {
+        var p = pts[j];
+        var fill = colors[j];
+        var stroke = dragIdx === j ? '#2d7ff9' : 'rgba(0,0,0,0.35)';
+        parts.push(
+          '<circle data-idx="' +
+            j +
+            '" cx="' +
+            p.x +
+            '" cy="' +
+            p.y +
+            '" r="0.028" fill="' +
+            fill +
+            '" stroke="' +
+            stroke +
+            '" stroke-width="0.003" style="cursor:grab"/>'
+        );
+        parts.push(
+          '<text x="' +
+            (p.x + 0.04) +
+            '" y="' +
+            (p.y - 0.03) +
+            '" font-size="0.04" fill="currentColor" opacity="0.75">' +
+            labels[j] +
+            '</text>'
+        );
+      }
+
+      g.innerHTML = parts.join('');
+
+      var relS = hipRelativeVector(hip, shoulder, { mirrorX: mirror });
+      var relW = hipRelativeVector(hip, wrist, { mirrorX: mirror });
+      var aim = hipRelativeVector(shoulder, wrist, { mirrorX: mirror });
+      var aimUe = mpBasisToUeVector(aim, { scale: scaleCm, depthGain: depthGain });
+      var aimLen = vecLen(aimUe);
+      var dir =
+        aimLen > 1e-6
+          ? { x: aimUe.x / aimLen, y: aimUe.y / aimLen, z: aimUe.z / aimLen }
+          : { x: 0, y: 0, z: 1 };
+      var yp = directionToYawPitchDegrees(dir);
+
+      var pxW = 640;
+      var pxH = 480;
+      var hipPx = mediaPipeNormalizedToImagePx(hip, pxW, pxH);
+
+      var lines = [];
+      lines.push('Normalized (MediaPipe-style, top-left origin):');
+      lines.push('  Hip      x=' + hip.x.toFixed(3) + ' y=' + hip.y.toFixed(3) + ' z=' + hip.z.toFixed(3));
+      lines.push('  Shoulder x=' + shoulder.x.toFixed(3) + ' y=' + shoulder.y.toFixed(3) + ' z=' + shoulder.z.toFixed(3));
+      lines.push('  Wrist    x=' + wrist.x.toFixed(3) + ' y=' + wrist.y.toFixed(3) + ' z=' + wrist.z.toFixed(3));
+      lines.push('At ' + pxW + '×' + pxH + ' px (hip center ≈ ' + hipPx.x.toFixed(1) + ', ' + hipPx.y.toFixed(1) + ')');
+      lines.push('');
+      lines.push('Hip-relative (mirror X: ' + mirror + '):');
+      lines.push('  Shoulder: (' + relS.x.toFixed(4) + ', ' + relS.y.toFixed(4) + ', ' + relS.z.toFixed(4) + ')');
+      lines.push('  Wrist:    (' + relW.x.toFixed(4) + ', ' + relW.y.toFixed(4) + ', ' + relW.z.toFixed(4) + ')');
+      lines.push('  Shoulder→wrist: (' + aim.x.toFixed(4) + ', ' + aim.y.toFixed(4) + ', ' + aim.z.toFixed(4) + ')');
+      lines.push('');
+      lines.push('Default axis map → UE-style cm (depthGain=' + depthGain.toFixed(2) + ', scale=' + scaleCm + '):');
+      lines.push('  Aim vector: X=' + aimUe.x.toFixed(2) + '  Y=' + aimUe.y.toFixed(2) + '  Z=' + aimUe.z.toFixed(2));
+      lines.push('  |Aim|=' + aimLen.toFixed(2) + ' cm');
+      if (yp.valid) {
+        lines.push('Simplified yaw/pitch from direction (for Anim BP prototyping):');
+        lines.push('  yaw=' + yp.yaw.toFixed(1) + '°  pitch=' + yp.pitch.toFixed(1) + '°');
+      } else {
+        lines.push('Simplified yaw/pitch: n/a (zero-length aim).');
+      }
+
+      readoutEl.textContent = lines.join('\n');
+    }
+
+    mountSvgStructure();
+    var svgEl = svgHost.querySelector('svg');
+    if (!svgEl) return;
+
+    svgEl.addEventListener('pointerdown', function (ev) {
+      var n = normFromClient(svgEl, ev);
+      var idx = nearestLandmark(n.x, n.y);
+      if (idx < 0) return;
+      dragIdx = idx;
+      svgEl.setPointerCapture(ev.pointerId);
+      ev.preventDefault();
+    });
+
+    svgEl.addEventListener('pointermove', function (ev) {
+      if (dragIdx < 0) return;
+      var n = normFromClient(svgEl, ev);
+      if (dragIdx === 0) {
+        hip.x = n.x;
+        hip.y = n.y;
+      } else if (dragIdx === 1) {
+        shoulder.x = n.x;
+        shoulder.y = n.y;
+      } else {
+        wrist.x = n.x;
+        wrist.y = n.y;
+      }
+      renderFrame();
+      ev.preventDefault();
+    });
+
+    function endDrag(ev) {
+      if (dragIdx < 0) return;
+      try {
+        svgEl.releasePointerCapture(ev.pointerId);
+      } catch (e) {}
+      dragIdx = -1;
+      renderFrame();
+    }
+
+    svgEl.addEventListener('pointerup', endDrag);
+    svgEl.addEventListener('pointercancel', endDrag);
+
+    if (mirrorEl) mirrorEl.addEventListener('change', renderFrame);
+    if (depthEl) depthEl.addEventListener('input', renderFrame);
+    if (scaleEl) scaleEl.addEventListener('input', renderFrame);
+    if (wristZEl) wristZEl.addEventListener('input', renderFrame);
+
+    renderFrame();
+  }
+
   // ─── Exports ─────────────────────────────────────────────────────────────
 
   root.RetargetInteractives = {
@@ -1239,11 +1518,16 @@
     mountIKDemo: mountIKDemo,
     mountRootMotion: mountRootMotion,
     mountSpineDist: mountSpineDist,
+    mountMediaPipeUeLab: mountMediaPipeUeLab,
     // pure helpers
     scaleAround: scaleAround,
     solveIK2Bone: solveIK2Bone,
     distributeRotation: distributeRotation,
     computeWalkPose: computeWalkPose,
     computeSpineChain: computeSpineChain,
+    mediaPipeNormalizedToImagePx: mediaPipeNormalizedToImagePx,
+    hipRelativeVector: hipRelativeVector,
+    mpBasisToUeVector: mpBasisToUeVector,
+    directionToYawPitchDegrees: directionToYawPitchDegrees,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

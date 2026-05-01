@@ -230,3 +230,105 @@ describe('RetargetInteractives.computeWalkPose', () => {
     assert.ok(Math.abs(pose.pelvis.x - 200) < 10, 'pelvis.x should be near rootX=200');
   });
 });
+
+// ─── mediaPipeNormalizedToImagePx ──────────────────────────────────────────
+
+describe('RetargetInteractives.mediaPipeNormalizedToImagePx', () => {
+  it('is exported as a function', () => {
+    assert.ok(typeof R.mediaPipeNormalizedToImagePx === 'function');
+  });
+
+  it('scales x and y by width and height', () => {
+    const p = R.mediaPipeNormalizedToImagePx({ x: 0.5, y: 0.25, z: -0.1 }, 640, 480);
+    assert.ok(Math.abs(p.x - 320) < 0.001);
+    assert.ok(Math.abs(p.y - 120) < 0.001);
+  });
+
+  it('scales z by width (MediaPipe convention)', () => {
+    const p = R.mediaPipeNormalizedToImagePx({ x: 0, y: 0, z: 0.2 }, 800, 600);
+    assert.ok(Math.abs(p.z - 160) < 0.001);
+  });
+});
+
+// ─── hipRelativeVector ─────────────────────────────────────────────────────
+
+describe('RetargetInteractives.hipRelativeVector', () => {
+  it('is exported as a function', () => {
+    assert.ok(typeof R.hipRelativeVector === 'function');
+  });
+
+  it('subtracts components', () => {
+    const hip = { x: 0.5, y: 0.5, z: 0 };
+    const w = { x: 0.6, y: 0.4, z: -0.05 };
+    const v = R.hipRelativeVector(hip, w, {});
+    assert.ok(Math.abs(v.x - 0.1) < 1e-9);
+    assert.ok(Math.abs(v.y - -0.1) < 1e-9);
+    assert.equal(v.z, -0.05);
+  });
+
+  it('mirrorX flips the x delta', () => {
+    const a = { x: 0.2, y: 0, z: 0 };
+    const b = { x: 0.5, y: 0, z: 0 };
+    const v = R.hipRelativeVector(a, b, { mirrorX: true });
+    assert.ok(Math.abs(v.x - -0.3) < 1e-9);
+    assert.equal(v.y, 0);
+  });
+});
+
+// ─── mpBasisToUeVector ──────────────────────────────────────────────────────
+
+describe('RetargetInteractives.mpBasisToUeVector', () => {
+  it('is exported as a function', () => {
+    assert.ok(typeof R.mpBasisToUeVector === 'function');
+  });
+
+  it('maps depth to +X, image x to +Y, -image y to Z', () => {
+    const v = R.mpBasisToUeVector({ x: 0, y: 0, z: 1 }, { scale: 100, depthGain: 1 });
+    assert.ok(Math.abs(v.x - 100) < 1e-9);
+    assert.ok(Math.abs(v.y) < 1e-9);
+    assert.ok(Math.abs(v.z) < 1e-9);
+  });
+
+  it('applies depthGain to z input', () => {
+    const v = R.mpBasisToUeVector({ x: 0, y: 0, z: 1 }, { scale: 10, depthGain: 2 });
+    assert.ok(Math.abs(v.x - 20) < 1e-9);
+  });
+
+  it('applies flip factors', () => {
+    const v = R.mpBasisToUeVector({ x: 1, y: 1, z: 1 }, { scale: 1, flipX: -1, flipY: -1, flipZ: -1 });
+    assert.deepEqual(v, { x: -1, y: -1, z: 1 });
+  });
+});
+
+// ─── directionToYawPitchDegrees ─────────────────────────────────────────────
+
+describe('RetargetInteractives.directionToYawPitchDegrees', () => {
+  it('is exported as a function', () => {
+    assert.ok(typeof R.directionToYawPitchDegrees === 'function');
+  });
+
+  it('returns valid=false for zero vector', () => {
+    const r = R.directionToYawPitchDegrees({ x: 0, y: 0, z: 0 });
+    assert.equal(r.valid, false);
+  });
+
+  it('+X is yaw 0 and pitch 0', () => {
+    const r = R.directionToYawPitchDegrees({ x: 1, y: 0, z: 0 });
+    assert.equal(r.valid, true);
+    assert.ok(Math.abs(r.yaw) < 1e-9);
+    assert.ok(Math.abs(r.pitch) < 1e-9);
+  });
+
+  it('+Y is yaw 90°', () => {
+    const r = R.directionToYawPitchDegrees({ x: 0, y: 1, z: 0 });
+    assert.equal(r.valid, true);
+    assert.ok(Math.abs(r.yaw - 90) < 1e-6);
+    assert.ok(Math.abs(r.pitch) < 1e-6);
+  });
+
+  it('normalized internally', () => {
+    const r = R.directionToYawPitchDegrees({ x: 10, y: 0, z: 0 });
+    assert.equal(r.valid, true);
+    assert.ok(Math.abs(r.yaw) < 1e-9);
+  });
+});

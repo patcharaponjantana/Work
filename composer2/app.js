@@ -172,6 +172,7 @@
     var ik      = qs('[data-widget="ik-demo"]');
     var rm      = qs('[data-widget="root-motion-demo"]');
     var spine   = qs('[data-widget="spine-dist"]');
+    var mpUe    = qs('[data-widget="mediapipe-ue"]');
 
     if (bone)  R.mountBoneMap(bone);
     if (prop)  R.mountProportionDemo(prop);
@@ -180,6 +181,7 @@
     if (ik)    R.mountIKDemo(ik);
     if (rm)    R.mountRootMotion(rm);
     if (spine) R.mountSpineDist(spine);
+    if (mpUe)  R.mountMediaPipeUeLab(mpUe);
   }
 
   // ─── Boot ─────────────────────────────────────────────────────────────────

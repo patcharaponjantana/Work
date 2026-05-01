@@ -5,7 +5,7 @@
   "description": "Interactive skeletal retargeting tutorial (static site + quiz unit tests)",
   "type": "module",
   "scripts": {
-    "test": "node --test quiz.test.mjs interactive.test.mjs",
+    "test": "node --test quiz.test.mjs interactive.test.mjs skeleton-math.test.mjs",
     "test:vitest": "vitest run"
   },
   "devDependencies": {

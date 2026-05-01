@@ -5,6 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Interactive tutorial — skeletal animation retargeting</title>
     <link rel="stylesheet" href="styles.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+      }
+    </script>
     <script src="quiz.cjs" defer></script>
     <script src="interactive.js" defer></script>
     <script src="app.js" defer></script>
@@ -22,6 +30,14 @@
           <strong>How to use:</strong> open this file in a desktop browser (<code>index.html</code>). Every section has
           at least one interactive widget — try the sliders, click joints, toggle modes, and finish with the quiz.
         </p>
+        <p class="howto engine-callout">
+          <strong>Also on this page:</strong>
+          <a href="#mediapipe-ue">MediaPipe (Python) → Unreal Engine</a> — normalized landmark
+          <code>x,y,z</code>, axis remapping into UE-derived vectors, and a UDP/Python wiring sketch for webcam-driven
+          upper-body or aim offsets (soulslike-friendly layering). Includes a
+          <a href="#mediapipe-3d">3D draggable skeleton</a> with live joint-angle math (requires loading Three.js from the
+          CDN the first time).
+        </p>
       </header>
 
       <div class="layout">
@@ -36,6 +52,8 @@
             <li><a href="#spine">Spine distribution</a></li>
             <li><a href="#root-motion">Root motion</a></li>
             <li><a href="#ik">IK vs FK highlights</a></li>
+            <li><a href="#mediapipe-ue">MediaPipe → Unreal (webcam)</a></li>
+            <li><a href="#mediapipe-3d">3D pose &amp; angles</a></li>
             <li><a href="#pitfalls">Pitfalls checklist</a></li>
             <li><a href="#recap">Recap and quiz</a></li>
             <li><a href="#glossary">Glossary</a></li>
@@ -355,6 +373,168 @@
           </section>
 
           <!-- ═══════════════════════════════════════════════════════ -->
+          <section id="mediapipe-ue" aria-labelledby="mp-ue-heading">
+            <h2 id="mp-ue-heading">MediaPipe (Python) → Unreal Engine — landmarks to character control</h2>
+            <p>
+              <a href="https://developers.google.com/mediapipe/solutions/vision/pose_landmarker">MediaPipe Pose</a>
+              gives per-landmark <strong>normalized</strong> coordinates:
+              <code>x</code> and <code>y</code> are roughly in <strong>[0, 1]</strong> with the origin at the
+              <strong>top-left</strong> of the image; <code>z</code> is a <strong>relative depth</strong> estimate (scale
+              comparable to <code>x</code>, not meters). For gameplay in Unreal, you typically
+              <strong>subtract a stable reference</strong> (hips or mid-hip), optionally <strong>mirror</strong> for a
+              selfie camera, <strong>scale</strong> into UE centimeters with a calibration constant, then
+              <strong>smooth</strong> frames before driving an Animation Blueprint, Control Rig, or IK targets.
+            </p>
+            <p>
+              Unreal world space is <strong>Y-up</strong> and <strong>left-handed</strong>; camera-relative movement in a
+              soulslike still uses the same vectors once you express pose in <strong>world or camera basis</strong> — map
+              image axes explicitly (below) instead of treating <code>x,y,z</code> as engine coordinates.
+            </p>
+            <div class="note">
+              <p>
+                <strong>Free tools:</strong> MediaPipe and Python (OpenCV for capture) are free for typical use; Unreal
+                Engine is available without an upfront fee from Epic — commercial terms and any royalty threshold are
+                defined in the
+                <a href="https://www.unrealengine.com/en-US/eula">current Epic EULA</a> (verify before you ship).
+              </p>
+            </div>
+            <p>
+              <strong>Transport</strong> from Python to UE is usually a <strong>UDP or TCP</strong> socket sending compact
+              JSON per frame, e.g. <code>{"t":1730000000000,"lm":[[x,y,z],...]}</code> or precomputed bone targets. Receive in UE via Blueprint/C++, deserialize, then
+              <code>Set …</code> on the Anim Instance. Smooth and clamp in one place so gameplay code stays predictable.
+            </p>
+
+            <div class="interactive-panel" data-widget="mediapipe-ue" aria-labelledby="mp-lab-title">
+              <header>
+                <h4 id="mp-lab-title">Landmark lab — normalized → UE-style vector &amp; aim angles</h4>
+                <p class="hint">
+                  Drag <strong>hip</strong>, <strong>shoulder</strong>, and <strong>wrist</strong> in the frame (simulated
+                  MediaPipe normalization 0–1). Toggle mirror and depth gain to see hip-relative vectors, a default axis map
+                  into Unreal-style <code>(X,Y,Z)</code>, and simplified yaw/pitch from the shoulder→wrist direction.
+                </p>
+              </header>
+              <div data-role="mp-svg" class="mp-ue-host" tabindex="0" aria-label="Simulated camera frame with draggable landmarks"></div>
+              <div class="slider-row mp-ue-controls">
+                <label class="inline-label"><input type="checkbox" data-role="mp-mirror" /> Mirror X (selfie)</label>
+                <label for="mp-depth">Depth gain (z)</label>
+                <input
+                  id="mp-depth"
+                  data-role="mp-depth"
+                  type="range"
+                  min="50"
+                  max="200"
+                  value="100"
+                  aria-valuemin="50"
+                  aria-valuemax="200"
+                  aria-valuenow="100"
+                />
+                <label for="mp-scale">UE scale (cm / unit)</label>
+                <input
+                  id="mp-scale"
+                  data-role="mp-scale"
+                  type="range"
+                  min="40"
+                  max="220"
+                  value="100"
+                  aria-valuemin="40"
+                  aria-valuemax="220"
+                  aria-valuenow="100"
+                />
+                <label for="mp-wrist-z">Wrist z (normalized)</label>
+                <input
+                  id="mp-wrist-z"
+                  data-role="mp-wrist-z"
+                  type="range"
+                  min="-25"
+                  max="25"
+                  value="-8"
+                  aria-valuemin="-25"
+                  aria-valuemax="25"
+                  aria-valuenow="-8"
+                />
+              </div>
+              <pre class="mp-readout" data-role="mp-readout" role="region" aria-label="Conversion readout"></pre>
+            </div>
+
+            <h3 id="mediapipe-3d" class="h3-inline">3D pose lab — draggable skeleton &amp; bone angles</h3>
+            <p>
+              Move every joint as if you were editing simulated MediaPipe <code>x,y,z</code> outputs in a shared 3D space
+              (reduced 15-joint body graph: hips, spine, arms, legs). Each sphere is draggable; orbit the camera by
+              dragging the background. Interior <strong>joint angles</strong> use the standard elbow-knee convention:
+              at joint <strong>B</strong>, vectors <strong>u = A − B</strong> (toward parent) and
+              <strong>v = C − B</strong> (toward child), then
+              <strong>θ = arccos(clamp((u·v)/(|u||v|), −1, 1))</strong> in degrees.
+            </p>
+            <p class="note">
+              <strong>Network:</strong> this panel loads <strong>Three.js</strong> from the unpkg CDN via
+              <code>importmap</code>. Opening <code>index.html</code> as a raw <code>file://</code> URL often blocks those
+              imports—use a local HTTP server (for example run <code>npx serve .</code> in this folder) if the 3D view
+              stays blank. For offline use, vendor <code>three.module.js</code> and <code>examples/jsm</code> locally and
+              point the import map to those paths.
+            </p>
+
+            <div class="interactive-panel" data-widget="skeleton-3d" aria-labelledby="sk3d-title">
+              <header>
+                <h4 id="sk3d-title">Interactive 3D skeleton</h4>
+                <p class="hint">
+                  Drag colored joints. Left-drag empty space orbits; scroll zooms. Open each &ldquo;How&rdquo; block for the
+                  numeric walkthrough (dot product and arccos).
+                </p>
+              </header>
+              <div class="sk3d-layout">
+                <div data-role="sk3d-canvas-host" class="sk3d-canvas-host" aria-label="3D WebGL view"></div>
+                <div class="sk3d-side">
+                  <div class="interactive-toolbar sk3d-toolbar">
+                    <button type="button" data-action="sk3d-reset">Reset T-pose</button>
+                  </div>
+                  <div data-role="sk3d-angles" class="sk3d-angles" role="region" aria-label="Joint angles in degrees"></div>
+                  <section class="sk3d-derive-wrap" aria-label="Angle derivations">
+                    <h5 class="sk3d-derive-heading">How each angle is calculated</h5>
+                    <div data-role="sk3d-derivation" class="sk3d-derivation"></div>
+                  </section>
+                </div>
+              </div>
+            </div>
+
+            <h3 class="h3-inline">Appendix — minimal Python sender (outline)</h3>
+            <pre class="code-appendix"><code># pip install mediapipe opencv-python
+import json, socket, time, cv2
+import mediapipe as mp
+
+UDP_IP, UDP_PORT = "127.0.0.1", 5555
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+cap = cv2.VideoCapture(0)
+pose = mp.solutions.pose.Pose(static_image_mode=False)
+
+while cap.isOpened():
+    ok, frame = cap.read()
+    if not ok: break
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    res = pose.process(rgb)
+    if res.pose_landmarks:
+        lm = res.pose_landmarks.landmark
+        # Example: pack all 33 landmarks as [x,y,z] in MediaPipe normalization
+        payload = {"t": int(time.time() * 1000),
+                   "lm": [[p.x, p.y, p.z] for p in lm]}
+        sock.sendto(json.dumps(payload).encode("utf-8"), (UDP_IP, UDP_PORT))
+    # cv2.imshow("preview", frame); key = cv2.waitKey(1)
+
+cap.release(); pose.close()</code></pre>
+
+            <h3 class="h3-inline">Appendix — Unreal (conceptual)</h3>
+            <p>
+              Run a listening <strong>UDP socket</strong> (subsystem, actor component, or async Blueprint node where
+              available), parse the JSON string into an array of vectors, compute hip-relative offsets and your axis map
+              in Blueprint or C++, then write <strong>AnimBP variables</strong> (e.g. aim offset, spine additive, or effector
+              locations). For production, add version bytes or binary packing, rate limits, and validation.
+            </p>
+            <p>
+              Official references: Unreal docs for <strong>Networking / Sockets</strong>, <strong>Animation Blueprints</strong>,
+              and <strong>Control Rig</strong> — match your project&rsquo;s UE version.
+            </p>
+          </section>
+
+          <!-- ═══════════════════════════════════════════════════════ -->
           <section id="pitfalls" aria-labelledby="pitfalls-heading">
             <h2 id="pitfalls-heading">Pitfalls checklist</h2>
             <ul>
@@ -458,13 +638,27 @@
                 different spine bone counts.
               </p>
             </details>
+            <details class="glossary-disclosure">
+              <summary>MediaPipe landmark (Pose)</summary>
+              <p>
+                A 2D/3D point in normalized image space: <code>x,y</code> in about [0,1] from top-left,
+                <code>z</code> relative depth; subtract a reference landmark and remap axes before using as Unreal world
+                units.
+              </p>
+            </details>
           </section>
 
           <footer class="page-footer">
-            <p>Standalone tutorial asset — no network calls. Customize copy or visuals freely for your team wiki.</p>
+            <p>
+              Standalone tutorial asset — most sections need no network. The
+              <a href="#mediapipe-3d">3D pose lab</a> loads Three.js from a CDN on first visit (see note there). Customize
+              copy or visuals freely for your team wiki.
+            </p>
           </footer>
         </main>
       </div>
     </div>
+    <script src="skeleton-math.js"></script>
+    <script type="module" src="skeleton-3d.mjs"></script>
   </body>
 </html>

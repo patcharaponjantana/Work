@@ -4,6 +4,8 @@
   "version": "1.0.0",
   "description": "Animation retargeting interactive workshop — Sonnet version",
   "scripts": {
-    "test": "node --test retarget-math.test.mjs"
+    "test": "node --test retarget-math.test.mjs",
+    "test:mp": "node --test mediapipe-ue.test.mjs",
+    "test:all": "node --test retarget-math.test.mjs mediapipe-ue.test.mjs"
   }
 }
