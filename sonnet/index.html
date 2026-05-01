@@ -1,0 +1,1201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Retargeting Workshop</title>
+<script src="retarget-math.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0d0f17;--surface:#13161f;--surface2:#1a1e2e;--surface3:#202538;
+  --border:#252a3d;--text:#dde4f0;--muted:#7b879e;--dim:#4a5268;
+  --accent:#5b9cf6;--accent-dim:rgba(91,156,246,.14);--accent-hi:rgba(91,156,246,.22);
+  --green:#4ade80;--amber:#fbbf24;--red:#f87171;--purple:#a78bfa;
+  --font:system-ui,-apple-system,'Segoe UI',sans-serif;
+  --mono:ui-monospace,'Cascadia Code','Fira Code',monospace;
+}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--font);font-size:15px;line-height:1.55}
+
+/* ── Header ─────────────────────────────────────────────────── */
+.hdr{
+  position:sticky;top:0;z-index:20;
+  height:50px;padding:0 20px;
+  background:var(--surface);
+  border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:18px;
+}
+.hdr-title{
+  font-size:11px;font-weight:700;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--muted);white-space:nowrap;
+}
+.tab-bar{display:flex;gap:2px;overflow-x:auto;scrollbar-width:none}
+.tab-bar::-webkit-scrollbar{display:none}
+.tab{
+  padding:5px 14px;border:none;background:transparent;
+  color:var(--muted);font:inherit;font-size:13px;cursor:pointer;
+  border-radius:6px;white-space:nowrap;
+  transition:color 120ms,background 120ms;
+}
+.tab:hover{color:var(--text);background:rgba(255,255,255,.05)}
+.tab.active{color:var(--accent);background:var(--accent-dim)}
+
+/* ── Panels ──────────────────────────────────────────────────── */
+.panels{height:calc(100vh - 50px);overflow:hidden;position:relative}
+.panel{display:none;height:100%;overflow-y:auto;padding:22px 24px;flex-direction:column;gap:18px}
+.panel.active{display:flex}
+
+/* ── Typography ──────────────────────────────────────────────── */
+.pt{font-size:19px;font-weight:600}
+.ps{font-size:13px;color:var(--muted);margin-top:2px;max-width:680px}
+.body-text{font-size:14px;color:var(--muted);max-width:680px;line-height:1.65}
+.body-text strong{color:var(--text)}
+
+/* ── Cards ───────────────────────────────────────────────────── */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px}
+.card-title{font-size:13px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px}
+
+/* ── Grid ────────────────────────────────────────────────────── */
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
+.g4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+@media(max-width:620px){.g2,.g3,.g4{grid-template-columns:1fr}}
+
+/* ── Controls ────────────────────────────────────────────────── */
+.ctrl-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px}
+.ctrl-label{font-size:12px;color:var(--muted);min-width:120px;white-space:nowrap}
+.slider{flex:1;min-width:100px;accent-color:var(--accent);cursor:pointer}
+.val{
+  font-family:var(--mono);font-size:12px;
+  background:var(--surface2);border-radius:4px;
+  padding:2px 8px;min-width:46px;text-align:right;
+  color:var(--accent);
+}
+.btn{
+  padding:6px 14px;border-radius:6px;
+  border:1px solid var(--border);background:var(--surface2);
+  color:var(--text);font:inherit;font-size:13px;cursor:pointer;
+  transition:background 100ms,border-color 100ms;
+  white-space:nowrap;
+}
+.btn:hover{background:rgba(255,255,255,.07);border-color:rgba(255,255,255,.15)}
+.btn.on{border-color:var(--accent);background:var(--accent-dim);color:var(--accent)}
+.btn-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+
+/* ── Readouts ────────────────────────────────────────────────── */
+.readouts{display:flex;gap:10px;flex-wrap:wrap}
+.ro{
+  background:var(--surface2);border-radius:8px;
+  padding:10px 14px;min-width:100px;
+}
+.ro-val{font-family:var(--mono);font-size:20px;font-weight:700;color:var(--accent)}
+.ro-label{font-size:11px;color:var(--muted);margin-top:1px}
+
+/* ── SVG hosts ───────────────────────────────────────────────── */
+.svg-host{width:100%;height:auto;display:block}
+.fig-wrap{
+  border:1px solid var(--border);border-radius:8px;
+  background:color-mix(in srgb,var(--surface2) 80%,#000);
+  padding:12px;overflow:hidden;
+}
+.fig-label{font-size:11px;color:var(--muted);margin-bottom:6px;font-weight:600;text-transform:uppercase;letter-spacing:.05em}
+
+/* ── Pipeline diagram ────────────────────────────────────────── */
+.pipe-flow{display:flex;align-items:center;gap:0;overflow-x:auto;padding-bottom:4px;flex-wrap:nowrap}
+.pipe-step{
+  flex-shrink:0;cursor:pointer;
+  background:var(--surface2);border:1px solid var(--border);
+  border-radius:8px;padding:14px 16px 12px;text-align:center;
+  min-width:105px;transition:border-color 120ms,background 120ms;
+}
+.pipe-step:hover,.pipe-step.sel{border-color:var(--accent);background:var(--accent-dim)}
+.pipe-step svg{display:block;margin:0 auto 8px;opacity:.75}
+.pipe-name{font-size:12px;font-weight:600}
+.pipe-num{font-size:10px;color:var(--muted);margin-top:2px;font-family:var(--mono)}
+.pipe-arrow{flex-shrink:0;padding:0 8px;color:var(--dim);font-size:20px;line-height:1}
+.pipe-detail{
+  background:var(--surface2);border:1px solid var(--accent-dim);border-radius:8px;
+  padding:16px;font-size:14px;line-height:1.65;color:var(--text);
+  min-height:80px;
+}
+.pipe-detail strong{color:var(--accent)}
+
+/* ── Bone mapper ─────────────────────────────────────────────── */
+.mapper-cols{display:grid;grid-template-columns:1fr auto 1fr;gap:0;align-items:start;max-width:600px;position:relative}
+.bone-list{display:flex;flex-direction:column;gap:4px}
+.bone-chip{
+  padding:6px 10px;border-radius:6px;border:1px solid var(--border);
+  background:var(--surface2);font-size:12px;cursor:pointer;
+  transition:border-color 120ms,background 120ms;font-family:var(--mono);
+  white-space:nowrap;
+}
+.bone-chip:hover{border-color:var(--accent-dim);background:var(--surface3)}
+.bone-chip.sel{border-color:var(--accent);background:var(--accent-dim);color:var(--accent)}
+.bone-chip.paired{border-color:var(--green);background:rgba(74,222,128,.1);color:var(--green)}
+.mapper-center{width:140px;position:relative}
+.mapper-svg{width:100%;height:100%;position:absolute;inset:0;pointer-events:none}
+.score-badge{
+  display:inline-block;font-family:var(--mono);font-size:28px;font-weight:700;
+  color:var(--accent);
+}
+
+/* ── Spine lab ───────────────────────────────────────────────── */
+.spine-cols{display:flex;gap:0;align-items:flex-end;overflow-x:auto}
+.spine-col{flex-shrink:0;text-align:center;padding:0 10px}
+.spine-col-label{font-size:11px;color:var(--muted);margin-top:8px;font-family:var(--mono)}
+.spine-svg{display:block}
+
+/* ── Quiz ─────────────────────────────────────────────────────── */
+.qcard{
+  background:var(--surface);border:1px solid var(--border);border-radius:10px;
+  padding:20px;max-width:680px;transition:border-color 200ms;
+}
+.qcard.answered-right{border-color:var(--green)}
+.qcard.answered-wrong{border-color:var(--red)}
+.qcard-q{font-size:15px;margin-bottom:14px;line-height:1.5}
+.qcard-q span{color:var(--muted);font-family:var(--mono);font-size:13px;margin-right:6px}
+.choice-list{display:flex;flex-direction:column;gap:6px}
+.choice{
+  padding:8px 12px;border-radius:7px;border:1px solid var(--border);
+  background:var(--surface2);font-size:13px;cursor:pointer;
+  display:flex;gap:10px;align-items:flex-start;
+  transition:border-color 120ms,background 120ms;
+}
+.choice:hover:not(.disabled){border-color:rgba(91,156,246,.4);background:var(--accent-dim)}
+.choice.correct{border-color:var(--green);background:rgba(74,222,128,.1);color:var(--green)}
+.choice.wrong{border-color:var(--red);background:rgba(248,113,113,.1);color:var(--red)}
+.choice.disabled{cursor:default}
+.choice-key{font-family:var(--mono);font-size:12px;color:var(--muted);flex-shrink:0;margin-top:1px}
+.quiz-score-wrap{text-align:center;padding:28px 0 12px}
+.quiz-score-num{font-family:var(--mono);font-size:48px;font-weight:700;color:var(--accent)}
+.quiz-score-label{font-size:14px;color:var(--muted);margin-top:4px}
+</style>
+</head>
+<body>
+
+<header class="hdr">
+  <span class="hdr-title">Retargeting Workshop</span>
+  <nav class="tab-bar" aria-label="Sections">
+    <button class="tab" data-tab="pipeline">Pipeline</button>
+    <button class="tab" data-tab="bindpose">Bind Pose</button>
+    <button class="tab" data-tab="walkcycle">Walk Cycle</button>
+    <button class="tab" data-tab="ik">IK Playground</button>
+    <button class="tab" data-tab="bonemap">Bone Mapper</button>
+    <button class="tab" data-tab="spine">Spine Lab</button>
+    <button class="tab" data-tab="quiz">Quiz</button>
+  </nav>
+</header>
+
+<div class="panels">
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<!-- TAB 1 — Pipeline                                           -->
+<!-- ══════════════════════════════════════════════════════════ -->
+<section class="panel" data-panel="pipeline" id="panel-pipeline">
+  <div>
+    <div class="pt">The Retargeting Pipeline</div>
+    <div class="ps">Click any stage to understand what happens there and why each step matters.</div>
+  </div>
+
+  <div class="pipe-flow" id="pipe-flow"></div>
+  <div class="pipe-detail" id="pipe-detail">Select a stage above to see details.</div>
+
+  <div class="body-text">
+    <strong>Why this order matters:</strong> Each stage depends on the previous. Skipping bind-pose alignment produces artifacts that no amount of IK tuning can fix. Skipping IK after a correct retarget leaves residual foot-slide that breaks game feel.
+  </div>
+
+  <div class="g3">
+    <div class="card">
+      <div class="card-title">Game engine</div>
+      <div class="body-text">Unreal's IK Retargeter runs all five stages in the editor — pose matching, chain definition, FK retarget, IK post-pass — and bakes or previews at runtime.</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Film / VFX</div>
+      <div class="body-text">MotionBuilder's "Characterize" step is the bind-pose alignment stage. Its Story solver runs retarget + IK pass simultaneously on the timeline.</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Real-time avatar</div>
+      <div class="body-text">Body tracking drivers (VR, phone) emit a normalized skeleton. The pipeline adapts that signal to custom avatar proportions — all five stages, every frame.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<!-- TAB 2 — Bind Pose                                          -->
+<!-- ══════════════════════════════════════════════════════════ -->
+<section class="panel" data-panel="bindpose" id="panel-bindpose">
+  <div>
+    <div class="pt">Bind Pose Mismatch</div>
+    <div class="ps">Adjust all three sliders in real time to see how source bind, target bind, and animation delta interact — and why correction is essential.</div>
+  </div>
+
+  <div class="g2">
+    <div class="card">
+      <div class="card-title">Controls</div>
+      <div class="ctrl-row">
+        <span class="ctrl-label">Source bind angle</span>
+        <input class="slider" type="range" id="bp-src-bind" min="-10" max="90" value="0"/>
+        <span class="val" id="bp-src-bind-v">0°</span>
+      </div>
+      <div class="ctrl-row">
+        <span class="ctrl-label">Target bind angle</span>
+        <input class="slider" type="range" id="bp-tgt-bind" min="-10" max="90" value="30"/>
+        <span class="val" id="bp-tgt-bind-v">30°</span>
+      </div>
+      <div class="ctrl-row">
+        <span class="ctrl-label">Animation raise</span>
+        <input class="slider" type="range" id="bp-anim" min="-80" max="40" value="-50"/>
+        <span class="val" id="bp-anim-v">−50°</span>
+      </div>
+      <div style="margin-top:16px;font-size:13px;color:var(--muted);line-height:1.65">
+        A <strong style="color:var(--text)">T-pose</strong> source bind = 0°. An <strong style="color:var(--text)">A-pose</strong> target bind ≈ 30°. The naive approach copies the source's final angle; the corrected approach applies the animation <em>delta</em> from the target's own bind — producing the same motion magnitude regardless of bind difference.
+      </div>
+    </div>
+
+    <div class="card" style="display:flex;flex-direction:column;gap:12px">
+      <div class="card-title">Arm visualizer</div>
+      <div class="g2">
+        <div class="fig-wrap">
+          <div class="fig-label">Source</div>
+          <div id="bp-src-host"></div>
+        </div>
+        <div class="fig-wrap">
+          <div class="fig-label">Target — naive</div>
+          <div id="bp-tgt-naive-host"></div>
+        </div>
+      </div>
+      <div class="fig-wrap">
+        <div class="fig-label">Target — corrected</div>
+        <div id="bp-tgt-corrected-host"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="readouts" id="bp-readouts">
+    <div class="ro"><div class="ro-val" id="bp-delta-val">—</div><div class="ro-label">Animation delta</div></div>
+    <div class="ro"><div class="ro-val" id="bp-naive-val">—</div><div class="ro-label">Naive result angle</div></div>
+    <div class="ro"><div class="ro-val" id="bp-corrected-val">—</div><div class="ro-label">Corrected result angle</div></div>
+    <div class="ro"><div class="ro-val" id="bp-error-val">—</div><div class="ro-label">Error without correction</div></div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<!-- TAB 3 — Walk Cycle                                         -->
+<!-- ══════════════════════════════════════════════════════════ -->
+<section class="panel" data-panel="walkcycle" id="panel-walkcycle">
+  <div>
+    <div class="pt">Walk Cycle Retarget</div>
+    <div class="ps">Same rotations, different bone lengths. Switch the target character preset to see how proportion differences change where the feet land.</div>
+  </div>
+
+  <div class="g2">
+    <div class="fig-wrap">
+      <div class="fig-label">Source skeleton — reference</div>
+      <div id="wc-src-host"></div>
+    </div>
+    <div class="fig-wrap">
+      <div class="fig-label">Target skeleton — <span id="wc-preset-label">Matched</span></div>
+      <div id="wc-tgt-host"></div>
+    </div>
+  </div>
+
+  <div class="btn-row">
+    <span style="font-size:12px;color:var(--muted)">Target preset:</span>
+    <button class="btn on" data-wc-preset="matched">Matched</button>
+    <button class="btn" data-wc-preset="tall">Tall</button>
+    <button class="btn" data-wc-preset="compact">Compact</button>
+    <button class="btn" data-wc-preset="wide">Wide</button>
+    <span style="margin-left:8px;font-size:12px;color:var(--muted)">Speed:</span>
+    <input class="slider" style="width:100px;flex:none" type="range" id="wc-speed" min="20" max="200" value="100"/>
+    <span class="val" id="wc-speed-v">1×</span>
+    <button class="btn" id="wc-play-btn">Pause</button>
+  </div>
+
+  <div class="readouts">
+    <div class="ro"><div class="ro-val" id="wc-foot-gap">—</div><div class="ro-label">Foot gap (target)</div></div>
+    <div class="ro"><div class="ro-val" id="wc-thigh-ratio">—</div><div class="ro-label">Thigh ratio</div></div>
+    <div class="ro"><div class="ro-val" id="wc-shin-ratio">—</div><div class="ro-label">Shin ratio</div></div>
+  </div>
+
+  <div class="body-text">
+    The <strong>Matched</strong> preset uses identical bone lengths — no artifact. <strong>Tall</strong> and <strong>Compact</strong> show the classic foot-float/sink: the same thigh and shin rotation values, applied to longer or shorter bones, place the ankle at a different world-space height. The <strong>Wide</strong> preset adds a stance-width difference, creating lateral drift in addition to vertical offset.
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<!-- TAB 4 — IK Playground                                      -->
+<!-- ══════════════════════════════════════════════════════════ -->
+<section class="panel" data-panel="ik" id="panel-ik">
+  <div>
+    <div class="pt">IK Playground</div>
+    <div class="ps">Drag the <span style="color:var(--accent)">hip</span> (square) or <span style="color:var(--amber)">foot target</span> (circle). The knee solves in real time using the two-bone law-of-cosines algorithm.</div>
+  </div>
+
+  <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
+    <div id="ik-canvas-wrap" style="flex:1;min-width:280px;max-width:520px">
+      <div class="fig-wrap" style="padding:0;overflow:hidden;cursor:crosshair">
+        <svg id="ik-svg" viewBox="0 0 480 340" style="width:100%;height:auto;display:block;touch-action:none"></svg>
+      </div>
+    </div>
+
+    <div style="flex:0 0 220px;display:flex;flex-direction:column;gap:12px">
+      <div class="card">
+        <div class="card-title">Bone lengths</div>
+        <div class="ctrl-row">
+          <span class="ctrl-label">Thigh (L1)</span>
+          <input class="slider" type="range" id="ik-l1" min="40" max="140" value="90"/>
+          <span class="val" id="ik-l1-v">90</span>
+        </div>
+        <div class="ctrl-row">
+          <span class="ctrl-label">Shin (L2)</span>
+          <input class="slider" type="range" id="ik-l2" min="40" max="140" value="82"/>
+          <span class="val" id="ik-l2-v">82</span>
+        </div>
+        <div class="btn-row" style="margin-top:10px">
+          <button class="btn on" id="ik-bend-btn">Knee: forward</button>
+          <button class="btn" id="ik-reach-btn">Show reach</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Live readouts</div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div class="ro"><div class="ro-val" id="ik-reach-pct">—</div><div class="ro-label">Reach %</div></div>
+          <div class="ro"><div class="ro-val" id="ik-knee-angle">—</div><div class="ro-label">Knee angle</div></div>
+          <div class="ro"><div class="ro-val" id="ik-dist-val">—</div><div class="ro-label">Hip → foot dist</div></div>
+        </div>
+      </div>
+
+      <div class="card" style="font-size:13px;color:var(--muted);line-height:1.6">
+        <strong style="color:var(--text);display:block;margin-bottom:6px">How it works</strong>
+        Using the <strong style="color:var(--accent)">law of cosines</strong>, the solver computes the angle at the hip so the knee is exactly L1 away from the hip and L2 away from the foot. When the target is out of reach (red), the leg extends fully.
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<!-- TAB 5 — Bone Mapper                                        -->
+<!-- ══════════════════════════════════════════════════════════ -->
+<section class="panel" data-panel="bonemap" id="panel-bonemap">
+  <div>
+    <div class="pt">Bone Mapping Lab</div>
+    <div class="ps">Click a source joint, then its semantic match on the target. The pelvis is pre-locked as the root. Try to get a perfect score.</div>
+  </div>
+
+  <div class="g2">
+    <div class="card" style="display:flex;flex-direction:column;gap:10px">
+      <div class="card-title">Mapper</div>
+      <div style="position:relative">
+        <div class="mapper-cols" id="mapper-cols">
+          <div class="bone-list" id="mapper-src"></div>
+          <div id="mapper-center-box" style="min-height:300px;position:relative;width:100px">
+            <svg id="mapper-lines-svg" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible"></svg>
+          </div>
+          <div class="bone-list" id="mapper-tgt"></div>
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="btn" id="mapper-check-btn">Check score</button>
+        <button class="btn" id="mapper-hint-btn">Reveal one</button>
+        <button class="btn" id="mapper-reset-btn">Reset</button>
+      </div>
+      <div id="mapper-status" style="font-size:13px;color:var(--muted);min-height:20px"></div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div class="card">
+        <div class="card-title">Score</div>
+        <div class="quiz-score-wrap" style="padding:12px 0 6px">
+          <div class="score-badge" id="mapper-score">0</div>
+          <div style="font-size:13px;color:var(--muted);margin-top:4px">/ <span id="mapper-total">12</span> pairs</div>
+        </div>
+      </div>
+      <div class="card" style="font-size:13px;color:var(--muted);line-height:1.65">
+        <strong style="color:var(--text);display:block;margin-bottom:6px">Why mapping matters</strong>
+        Without an explicit bone map, the engine has no way to know that "R_Arm" on a Mixamo rig and "upperarm_r" on a UE5 mannequin are the same logical joint. Mis-mapping a shoulder to a spine bone will produce severe twisting artifacts.
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<!-- TAB 6 — Spine Lab                                          -->
+<!-- ══════════════════════════════════════════════════════════ -->
+<section class="panel" data-panel="spine" id="panel-spine">
+  <div>
+    <div class="pt">Spine Distribution Lab</div>
+    <div class="ps">Control bend angle, target bone count, and distribution weighting. Compare how the same total arc spreads across different chain lengths.</div>
+  </div>
+
+  <div class="g2">
+    <div class="card">
+      <div class="card-title">Controls</div>
+      <div class="ctrl-row">
+        <span class="ctrl-label">Total bend</span>
+        <input class="slider" type="range" id="spine-bend" min="0" max="80" value="35"/>
+        <span class="val" id="spine-bend-v">35°</span>
+      </div>
+      <div class="ctrl-row">
+        <span class="ctrl-label">Target bones</span>
+        <input class="slider" type="range" id="spine-count" min="2" max="7" value="5" step="1"/>
+        <span class="val" id="spine-count-v">5</span>
+      </div>
+      <div style="margin-top:10px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Distribution mode</div>
+        <div class="btn-row">
+          <button class="btn on" data-spine-mode="even">Even</button>
+          <button class="btn" data-spine-mode="bottom">Bottom-heavy</button>
+          <button class="btn" data-spine-mode="top">Top-heavy</button>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Per-bone angles</div>
+      <div id="spine-per-bone" style="font-family:var(--mono);font-size:13px;display:flex;flex-direction:column;gap:4px;max-height:180px;overflow-y:auto"></div>
+    </div>
+  </div>
+
+  <div style="display:flex;gap:24px;align-items:flex-end;overflow-x:auto;padding:8px 0">
+    <div>
+      <div class="fig-label" style="text-align:center">Source (3 bones)</div>
+      <div id="spine-src-host" class="fig-wrap"></div>
+    </div>
+    <div>
+      <div class="fig-label" style="text-align:center" id="spine-tgt-label">Target (5 bones, even)</div>
+      <div id="spine-tgt-host" class="fig-wrap"></div>
+    </div>
+  </div>
+
+  <div class="body-text">
+    <strong>Bottom-heavy</strong> weighting concentrates bend in the lumbar region — matches human anatomy for forward bends. <strong>Top-heavy</strong> concentrates in the thoracic — useful for creature rigs with long necks. <strong>Even</strong> is the neutral default that preserves shape most faithfully when transitioning between rigs of similar size.
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<!-- TAB 7 — Quiz                                               -->
+<!-- ══════════════════════════════════════════════════════════ -->
+<section class="panel" data-panel="quiz" id="panel-quiz">
+  <div>
+    <div class="pt">Knowledge Check</div>
+    <div class="ps">Six questions covering the core concepts from every section. Answers reveal one at a time.</div>
+  </div>
+  <div id="quiz-questions"></div>
+  <div id="quiz-result" style="display:none">
+    <div class="quiz-score-wrap">
+      <div class="quiz-score-num" id="quiz-score-num">—</div>
+      <div class="quiz-score-label" id="quiz-score-label"></div>
+    </div>
+    <div class="btn-row" style="justify-content:center">
+      <button class="btn" id="quiz-retry-btn">Retry</button>
+    </div>
+  </div>
+</section>
+
+</div><!-- /panels -->
+
+<script>
+(function () {
+'use strict';
+const M = window.RetargetMath;
+if (!M) { document.body.innerHTML = '<p style="color:red;padding:20px">retarget-math.js failed to load.</p>'; return; }
+
+// ── Tabs ──────────────────────────────────────────────────────
+const tabs   = Array.from(document.querySelectorAll('.tab'));
+const panels = Array.from(document.querySelectorAll('.panel'));
+const inited = {};
+
+function activateTab(id) {
+  tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === id));
+  panels.forEach(p => p.classList.toggle('active', p.dataset.panel === id));
+  if (!inited[id]) { inited[id] = true; INITS[id] && INITS[id](); }
+}
+tabs.forEach(t => t.addEventListener('click', () => activateTab(t.dataset.tab)));
+
+// ── Shared SVG helpers ────────────────────────────────────────
+function svgL(a,b,w,op){
+  return `<line x1="${a.x.toFixed(1)}" y1="${a.y.toFixed(1)}" x2="${b.x.toFixed(1)}" y2="${b.y.toFixed(1)}" stroke="currentColor" stroke-width="${w||2.5}" stroke-linecap="round"${op?` opacity="${op}"`:''}/>`;
+}
+function svgC(p,r,fill,op){
+  return `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${r}" fill="${fill||'currentColor'}"${op?` opacity="${op}"`:''}/>`;
+}
+function svgT(x,y,text,extra){
+  return `<text x="${(+x).toFixed(1)}" y="${(+y).toFixed(1)}" font-size="11" fill="currentColor" opacity="0.55"${extra||''}>${text}</text>`;
+}
+
+// ══════════════════════════════════════════════════════════════
+// PIPELINE
+// ══════════════════════════════════════════════════════════════
+function initPipeline() {
+  const STEPS = [
+    { name:'Bind Pose\nAlign', num:'01', detail:'<strong>Normalize both skeletons to a shared reference orientation.</strong> If the source is T-pose and the target is A-pose, compute a per-bone rotation offset. All subsequent retargeting math depends on this being correct — wrong alignment causes twisted arms and spin artifacts that no later step can fully repair.' },
+    { name:'Bone\nMap', num:'02', detail:'<strong>Pair every logical source joint to its semantic equivalent on the target.</strong> Spine levels, shoulder, elbow, wrist, hip, knee, ankle, neck, head. Naming patterns help but manual verification catches mis-named helper bones and twist joints that should be suppressed.' },
+    { name:'Extract\nRotations', num:'03', detail:'<strong>Per frame, read the local rotation of each source bone relative to its bind pose.</strong> This delta captures the motion intent independently of global orientation. Using relative rotations (not world-space absolute angles) is what makes retargeting work across rigs with different global setups.' },
+    { name:'Apply to\nTarget', num:'04', detail:'<strong>Write the same rotation deltas onto target bones, accounting for the bind pose offset computed in step 1.</strong> When bone counts differ (e.g. 3 source spine vs 5 target), distribute the total arc proportionally across the target chain.' },
+    { name:'IK\nPost-pass', num:'05', detail:'<strong>Run a foot (and optionally hand) IK solve to correct world-space position errors introduced by proportion differences.</strong> Detect contact frames from source foot velocity, then use two-bone IK on thigh–shin–ankle to pin the ankle to the intended ground position on those frames.' },
+  ];
+
+  const flow = document.getElementById('pipe-flow');
+  const detail = document.getElementById('pipe-detail');
+  let sel = null;
+
+  STEPS.forEach((s, i) => {
+    if (i > 0) {
+      const arr = document.createElement('span');
+      arr.className = 'pipe-arrow';
+      arr.textContent = '→';
+      flow.appendChild(arr);
+    }
+    const el = document.createElement('div');
+    el.className = 'pipe-step';
+    el.innerHTML = `<div class="pipe-name">${s.name.replace('\n','<br>')}</div><div class="pipe-num">${s.num}</div>`;
+    el.addEventListener('click', () => {
+      if (sel) sel.classList.remove('sel');
+      el.classList.add('sel');
+      sel = el;
+      detail.innerHTML = s.detail;
+    });
+    flow.appendChild(el);
+  });
+}
+
+// ══════════════════════════════════════════════════════════════
+// BIND POSE
+// ══════════════════════════════════════════════════════════════
+function initBindPose() {
+  const AW = 220, AH = 160, UPPER = 56, LOWER = 44;
+
+  function armSvg(shoulderX, shoulderY, bindDeg, finalDeg, label, isCompare) {
+    const bindRad = M.deg2rad(bindDeg);
+    const finalRad = M.deg2rad(finalDeg);
+    const elbow = { x: shoulderX + UPPER * Math.cos(finalRad), y: shoulderY + UPPER * Math.sin(finalRad) };
+    const wrist  = { x: elbow.x + LOWER * Math.cos(finalRad), y: elbow.y + LOWER * Math.sin(finalRad) };
+    // bind guide
+    const bindTip = { x: shoulderX + (UPPER+LOWER+6)*Math.cos(bindRad), y: shoulderY + (UPPER+LOWER+6)*Math.sin(bindRad) };
+
+    const parts = [];
+    parts.push(`<svg viewBox="0 0 ${AW} ${AH}" class="svg-host" aria-label="${label}">`);
+    // bind guide line
+    parts.push(`<line x1="${shoulderX}" y1="${shoulderY}" x2="${bindTip.x.toFixed(1)}" y2="${bindTip.y.toFixed(1)}" stroke="currentColor" stroke-opacity="0.15" stroke-width="1.5" stroke-dasharray="3 5"/>`);
+    // angle arc
+    const arcR = 30;
+    const da = finalDeg - bindDeg;
+    if (Math.abs(da) > 1) {
+      const aStart = M.deg2rad(Math.min(bindDeg, finalDeg));
+      const aEnd   = M.deg2rad(Math.max(bindDeg, finalDeg));
+      const x1 = shoulderX + arcR*Math.cos(aStart), y1 = shoulderY + arcR*Math.sin(aStart);
+      const x2 = shoulderX + arcR*Math.cos(aEnd),   y2 = shoulderY + arcR*Math.sin(aEnd);
+      const large = Math.abs(da) > 180 ? 1 : 0;
+      parts.push(`<path d="M${x1.toFixed(1)} ${y1.toFixed(1)} A${arcR} ${arcR} 0 ${large} 1 ${x2.toFixed(1)} ${y2.toFixed(1)}" fill="none" stroke="${isCompare?'#f87171':'#4ade80'}" stroke-width="2" stroke-opacity="0.5"/>`);
+    }
+    // bones
+    parts.push(svgC({x:shoulderX,y:shoulderY}, 7, 'currentColor'));
+    parts.push(svgL({x:shoulderX,y:shoulderY}, elbow, 4));
+    parts.push(svgC(elbow, 5, 'currentColor'));
+    parts.push(svgL(elbow, wrist, 3));
+    parts.push(svgC(wrist, 4, 'currentColor', 0.6));
+    // angle label
+    parts.push(svgT(shoulderX + 38, shoulderY - 8, `${finalDeg.toFixed(0)}°`, ' font-size="12" fill="currentColor" opacity="0.7"'));
+    // label
+    parts.push(svgT(8, AH - 8, label));
+    parts.push(`</svg>`);
+    return parts.join('');
+  }
+
+  function render() {
+    const srcBind = Number(document.getElementById('bp-src-bind').value);
+    const tgtBind = Number(document.getElementById('bp-tgt-bind').value);
+    const animRaw = Number(document.getElementById('bp-anim').value);
+
+    const srcFinal      = srcBind + animRaw;
+    const tgtNaive      = srcFinal;              // copy absolute angle
+    const tgtCorrected  = tgtBind + animRaw;     // apply delta from own bind
+    const error         = Math.abs(tgtNaive - tgtCorrected);
+
+    document.getElementById('bp-src-bind-v').textContent = `${srcBind>0?'+':''}${srcBind}°`;
+    document.getElementById('bp-tgt-bind-v').textContent = `${tgtBind>0?'+':''}${tgtBind}°`;
+    document.getElementById('bp-anim-v').textContent     = `${animRaw>0?'+':''}${animRaw}°`;
+
+    document.getElementById('bp-delta-val').textContent      = `${animRaw>0?'+':''}${animRaw}°`;
+    document.getElementById('bp-naive-val').textContent      = `${tgtNaive.toFixed(0)}°`;
+    document.getElementById('bp-corrected-val').textContent  = `${tgtCorrected.toFixed(0)}°`;
+    document.getElementById('bp-error-val').textContent      = `${error.toFixed(0)}°`;
+    document.getElementById('bp-error-val').style.color = error > 5 ? 'var(--red)' : 'var(--green)';
+
+    const sX = 30, sY = 80;
+    document.getElementById('bp-src-host').innerHTML      = armSvg(sX, sY, srcBind, srcFinal, 'Source final', false);
+    document.getElementById('bp-tgt-naive-host').innerHTML     = armSvg(sX, sY, tgtBind, tgtNaive, 'Naive copy', true);
+    document.getElementById('bp-tgt-corrected-host').innerHTML = armSvg(sX, sY, tgtBind, tgtCorrected, 'Corrected', false);
+  }
+
+  ['bp-src-bind','bp-tgt-bind','bp-anim'].forEach(id => {
+    document.getElementById(id).addEventListener('input', render);
+  });
+  render();
+}
+
+// ══════════════════════════════════════════════════════════════
+// WALK CYCLE
+// ══════════════════════════════════════════════════════════════
+function initWalkCycle() {
+  const SRC = { spine:33, chest:21, neck:13, upperArm:26, lowerArm:23, thigh:50, shin:48, headR:11 };
+  const PRESETS = {
+    matched: { ...SRC },
+    tall:    { ...SRC, thigh:66, shin:63 },
+    compact: { ...SRC, thigh:36, shin:34 },
+    wide:    { ...SRC, thigh:40, shin:37, headR:9 },
+  };
+  const GROUND_Y = 210, W = 180, H = 225;
+
+  let preset = 'matched';
+  let playing = true;
+  let speed = 1.0;
+  let raf = null, t0 = null;
+
+  function renderFrame(j, isTarget) {
+    const footColor = isTarget ? 'var(--amber)' : 'var(--green)';
+    const parts = [];
+    parts.push(`<svg viewBox="0 0 ${W} ${H}" class="svg-host">`);
+    // ground
+    parts.push(`<line x1="8" y1="${GROUND_Y}" x2="${W-8}" y2="${GROUND_Y}" stroke="currentColor" stroke-opacity="0.15" stroke-width="1.5"/>`);
+    // back limbs
+    parts.push(svgL(j.rHip, j.rKnee, 2, 0.3));
+    parts.push(svgL(j.rKnee, j.rAnkle, 2, 0.3));
+    parts.push(svgL(j.rShoulder, j.rElbow, 2, 0.3));
+    parts.push(svgL(j.rElbow, j.rWrist, 2, 0.3));
+    // torso
+    parts.push(svgL(j.lHip, j.pelvis, 3));
+    parts.push(svgL(j.pelvis, j.rHip, 3));
+    parts.push(svgL(j.pelvis, j.spine, 3));
+    parts.push(svgL(j.spine, j.chest, 3));
+    parts.push(svgL(j.lShoulder, j.chest, 3));
+    parts.push(svgL(j.chest, j.rShoulder, 3));
+    parts.push(svgL(j.chest, j.neck, 3));
+    // head
+    parts.push(`<circle cx="${j.headC.x.toFixed(1)}" cy="${(j.headC.y-j.headC.y%1-10).toFixed(1)}" r="11" fill="none" stroke="currentColor" stroke-width="2.5"/>`);
+    parts.push(svgL(j.neck, j.headC, 2.5));
+    // front limbs
+    parts.push(svgL(j.lHip, j.lKnee, 3));
+    parts.push(svgL(j.lKnee, j.lAnkle, 3));
+    parts.push(svgL(j.lShoulder, j.lElbow, 3));
+    parts.push(svgL(j.lElbow, j.lWrist, 3));
+    // foot markers
+    parts.push(svgC(j.lAnkle, 5, footColor, 0.9));
+    parts.push(svgC(j.rAnkle, 4, footColor, 0.3));
+    // foot gap indicator (target only)
+    if (isTarget && Math.abs(j.lAnkle.y - GROUND_Y) > 3) {
+      const gapY1 = Math.min(j.lAnkle.y, GROUND_Y);
+      const gapY2 = Math.max(j.lAnkle.y, GROUND_Y);
+      parts.push(`<line x1="${(j.lAnkle.x+12).toFixed(1)}" y1="${gapY1.toFixed(1)}" x2="${(j.lAnkle.x+12).toFixed(1)}" y2="${gapY2.toFixed(1)}" stroke="var(--amber)" stroke-opacity="0.5" stroke-width="1.5" stroke-dasharray="2 3"/>`);
+    }
+    parts.push(`</svg>`);
+    return parts.join('');
+  }
+
+  function tick(ts) {
+    if (!t0) t0 = ts;
+    const elapsed = ((ts - t0) / 1000) * speed;
+    const tgtSkel = PRESETS[preset];
+    const src = M.computeWalkPose(SRC, elapsed);
+    const tgt = M.computeWalkPose(tgtSkel, elapsed);
+
+    document.getElementById('wc-src-host').innerHTML = renderFrame(src, false);
+    document.getElementById('wc-tgt-host').innerHTML = renderFrame(tgt, true);
+
+    const gap = (tgt.lAnkle.y - GROUND_Y).toFixed(1);
+    document.getElementById('wc-foot-gap').textContent = (Number(gap) > 0 ? '+' : '') + gap + 'px';
+    document.getElementById('wc-foot-gap').style.color = Math.abs(Number(gap)) > 5 ? 'var(--amber)' : 'var(--green)';
+    document.getElementById('wc-thigh-ratio').textContent = (tgtSkel.thigh / SRC.thigh).toFixed(2) + '×';
+    document.getElementById('wc-shin-ratio').textContent  = (tgtSkel.shin  / SRC.shin ).toFixed(2) + '×';
+
+    if (playing) raf = requestAnimationFrame(tick);
+  }
+
+  function start() { t0 = null; raf = requestAnimationFrame(tick); }
+  function stop()  { cancelAnimationFrame(raf); raf = null; }
+
+  document.querySelectorAll('[data-wc-preset]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      preset = btn.dataset.wcPreset;
+      document.querySelectorAll('[data-wc-preset]').forEach(b => b.classList.toggle('on', b === btn));
+      document.getElementById('wc-preset-label').textContent = btn.textContent;
+    });
+  });
+
+  document.getElementById('wc-speed').addEventListener('input', e => {
+    speed = Number(e.target.value) / 100;
+    document.getElementById('wc-speed-v').textContent = speed.toFixed(1) + '×';
+  });
+
+  document.getElementById('wc-play-btn').addEventListener('click', e => {
+    playing = !playing;
+    e.target.textContent = playing ? 'Pause' : 'Play';
+    if (playing) start(); else stop();
+  });
+
+  start();
+}
+
+// ══════════════════════════════════════════════════════════════
+// IK PLAYGROUND
+// ══════════════════════════════════════════════════════════════
+function initIK() {
+  const SVG = document.getElementById('ik-svg');
+  const VW = 480, VH = 340;
+
+  const state = {
+    hip:  { x: 240, y: 90 },
+    foot: { x: 265, y: 295 },
+    L1: 90, L2: 82,
+    bend: true,
+    dragging: null,
+    showReach: false,
+  };
+
+  function toSVG(e) {
+    const r = SVG.getBoundingClientRect();
+    const cx = e.touches ? e.touches[0].clientX : e.clientX;
+    const cy = e.touches ? e.touches[0].clientY : e.clientY;
+    return { x: (cx - r.left) * (VW / r.width), y: (cy - r.top) * (VH / r.height) };
+  }
+  function hit(p, t, r) { return M.dist2d(p,t) <= r; }
+
+  function render() {
+    const { hip, foot, L1, L2, bend, showReach } = state;
+    const ik = M.solveIK2Bone(hip, foot, L1, L2, bend);
+    const { knee, reachable, reachPct, kneeAngleDeg } = ik;
+    const rp = Math.min(reachPct, 1);
+    const boneColor = rp > 0.97 ? '#f87171' : rp > 0.82 ? '#fbbf24' : '#5b9cf6';
+    const parts = [];
+
+    // Grid
+    for (let x = 0; x <= VW; x += 40) parts.push(`<line x1="${x}" y1="0" x2="${x}" y2="${VH}" stroke="rgba(255,255,255,.025)" stroke-width="1"/>`);
+    for (let y = 0; y <= VH; y += 40) parts.push(`<line x1="0" y1="${y}" x2="${VW}" y2="${y}" stroke="rgba(255,255,255,.025)" stroke-width="1"/>`);
+
+    // Reach circle
+    if (showReach) {
+      parts.push(`<circle cx="${hip.x.toFixed(1)}" cy="${hip.y.toFixed(1)}" r="${L1+L2}" fill="none" stroke="${boneColor}" stroke-opacity="0.12" stroke-width="1.5" stroke-dasharray="5 7"/>`);
+      parts.push(`<circle cx="${hip.x.toFixed(1)}" cy="${hip.y.toFixed(1)}" r="${Math.abs(L1-L2)}" fill="none" stroke="${boneColor}" stroke-opacity="0.08" stroke-width="1" stroke-dasharray="3 5"/>`);
+    }
+
+    // Shadow / depth bones
+    parts.push(`<line x1="${(hip.x+4).toFixed(1)}" y1="${(hip.y+4).toFixed(1)}" x2="${(knee.x+4).toFixed(1)}" y2="${(knee.y+4).toFixed(1)}" stroke="#000" stroke-width="12" stroke-linecap="round" stroke-opacity="0.3"/>`);
+    parts.push(`<line x1="${(knee.x+4).toFixed(1)}" y1="${(knee.y+4).toFixed(1)}" x2="${(foot.x+4).toFixed(1)}" y2="${(foot.y+4).toFixed(1)}" stroke="#000" stroke-width="10" stroke-linecap="round" stroke-opacity="0.3"/>`);
+
+    // Bones
+    parts.push(`<line x1="${hip.x.toFixed(1)}" y1="${hip.y.toFixed(1)}" x2="${knee.x.toFixed(1)}" y2="${knee.y.toFixed(1)}" stroke="${boneColor}" stroke-width="11" stroke-linecap="round" opacity="0.9"/>`);
+    parts.push(`<line x1="${knee.x.toFixed(1)}" y1="${knee.y.toFixed(1)}" x2="${foot.x.toFixed(1)}" y2="${foot.y.toFixed(1)}" stroke="${boneColor}" stroke-width="9" stroke-linecap="round" opacity="0.8"/>`);
+
+    // Length labels
+    const hipMidX = (hip.x + knee.x)/2, hipMidY = (hip.y + knee.y)/2;
+    const kneMidX = (knee.x + foot.x)/2, kneMidY = (knee.y + foot.y)/2;
+    parts.push(svgT(hipMidX + 8, hipMidY, `L1=${L1}`));
+    parts.push(svgT(kneMidX + 8, kneMidY, `L2=${L2}`));
+
+    // Hip joint (draggable — square indicator)
+    parts.push(`<rect x="${(hip.x-10).toFixed(1)}" y="${(hip.y-10).toFixed(1)}" width="20" height="20" rx="4" fill="var(--surface2)" stroke="var(--accent)" stroke-width="2.5"/>`);
+    parts.push(svgT(hip.x + 14, hip.y + 4, 'Hip', ' font-size="12" fill="var(--accent)" opacity="0.8"'));
+
+    // Knee joint
+    parts.push(`<circle cx="${knee.x.toFixed(1)}" cy="${knee.y.toFixed(1)}" r="9" fill="var(--surface2)" stroke="${boneColor}" stroke-width="2"/>`);
+    parts.push(svgT(knee.x + 13, knee.y + 4, `Knee ${kneeAngleDeg.toFixed(0)}°`, ' font-size="11" opacity="0.6"'));
+
+    // Foot target (draggable — circle)
+    parts.push(`<circle cx="${foot.x.toFixed(1)}" cy="${foot.y.toFixed(1)}" r="20" fill="${boneColor}" fill-opacity="0.12"/>`);
+    parts.push(`<circle cx="${foot.x.toFixed(1)}" cy="${foot.y.toFixed(1)}" r="10" fill="${boneColor}" stroke="rgba(255,255,255,.25)" stroke-width="1.5"/>`);
+    parts.push(svgT(foot.x + 15, foot.y + 4, 'Foot target', ` font-size="11" fill="${boneColor}" opacity="0.85"`));
+
+    if (!reachable) {
+      parts.push(svgT(VW/2, VH-12, 'Out of reach — leg fully extended', ' text-anchor="middle" fill="var(--red)" opacity="0.7" font-size="12"'));
+    }
+
+    SVG.innerHTML = parts.join('');
+
+    document.getElementById('ik-reach-pct').textContent   = Math.round(rp * 100) + '%';
+    document.getElementById('ik-reach-pct').style.color   = rp > 0.97 ? 'var(--red)' : rp > 0.82 ? 'var(--amber)' : 'var(--accent)';
+    document.getElementById('ik-knee-angle').textContent  = kneeAngleDeg.toFixed(1) + '°';
+    document.getElementById('ik-dist-val').textContent    = M.dist2d(hip,foot).toFixed(0) + 'px';
+  }
+
+  SVG.addEventListener('mousedown', e => {
+    const p = toSVG(e);
+    if (hit(p, state.foot, 24)) state.dragging = 'foot';
+    else if (hit(p, state.hip, 18)) state.dragging = 'hip';
+  });
+  window.addEventListener('mousemove', e => {
+    if (!state.dragging) return;
+    const p = toSVG(e);
+    if (state.dragging === 'foot') state.foot = { x: M.clamp(p.x,0,VW), y: M.clamp(p.y,0,VH) };
+    else state.hip = { x: M.clamp(p.x,0,VW), y: M.clamp(p.y,0,VH) };
+    render();
+  });
+  window.addEventListener('mouseup', () => { state.dragging = null; });
+
+  SVG.addEventListener('touchstart', e => {
+    e.preventDefault();
+    const p = toSVG(e);
+    if (hit(p, state.foot, 28)) state.dragging = 'foot';
+    else if (hit(p, state.hip, 22)) state.dragging = 'hip';
+  }, { passive: false });
+  SVG.addEventListener('touchmove', e => {
+    e.preventDefault();
+    if (!state.dragging) return;
+    const p = toSVG(e);
+    if (state.dragging === 'foot') state.foot = { x: M.clamp(p.x,0,VW), y: M.clamp(p.y,0,VH) };
+    else state.hip = { x: M.clamp(p.x,0,VW), y: M.clamp(p.y,0,VH) };
+    render();
+  }, { passive: false });
+  SVG.addEventListener('touchend', () => { state.dragging = null; });
+
+  document.getElementById('ik-l1').addEventListener('input', e => {
+    state.L1 = Number(e.target.value);
+    document.getElementById('ik-l1-v').textContent = state.L1;
+    render();
+  });
+  document.getElementById('ik-l2').addEventListener('input', e => {
+    state.L2 = Number(e.target.value);
+    document.getElementById('ik-l2-v').textContent = state.L2;
+    render();
+  });
+  document.getElementById('ik-bend-btn').addEventListener('click', e => {
+    state.bend = !state.bend;
+    e.target.textContent = state.bend ? 'Knee: forward' : 'Knee: backward';
+    e.target.classList.toggle('on', state.bend);
+    render();
+  });
+  document.getElementById('ik-reach-btn').addEventListener('click', e => {
+    state.showReach = !state.showReach;
+    e.target.classList.toggle('on', state.showReach);
+    render();
+  });
+
+  render();
+}
+
+// ══════════════════════════════════════════════════════════════
+// BONE MAPPER
+// ══════════════════════════════════════════════════════════════
+function initBoneMapper() {
+  const SRC_BONES = ['Hips','Spine','Chest','Neck','Head','L_Shoulder','L_Arm','L_ForeArm','L_Hand','R_Shoulder','R_Arm','R_ForeArm'];
+  const TGT_BONES = ['pelvis','spine_01','spine_02','neck_01','head','clavicle_l','upperarm_l','lowerarm_l','hand_l','clavicle_r','upperarm_r','lowerarm_r'];
+  const CORRECT = { 'Hips':'pelvis','Spine':'spine_01','Chest':'spine_02','Neck':'neck_01','Head':'head','L_Shoulder':'clavicle_l','L_Arm':'upperarm_l','L_ForeArm':'lowerarm_l','L_Hand':'hand_l','R_Shoulder':'clavicle_r','R_Arm':'upperarm_r','R_ForeArm':'lowerarm_r' };
+  const TOTAL = SRC_BONES.length;
+
+  const srcList = document.getElementById('mapper-src');
+  const tgtList = document.getElementById('mapper-tgt');
+  const linesSvg = document.getElementById('mapper-lines-svg');
+  const scoreEl = document.getElementById('mapper-score');
+  const statusEl = document.getElementById('mapper-status');
+
+  let pairs = {}; // srcBone -> tgtBone
+  let selSrc = null;
+
+  function renderChips() {
+    srcList.innerHTML = '';
+    tgtList.innerHTML = '';
+    const pairedSrcs = new Set(Object.keys(pairs));
+    const pairedTgts = new Set(Object.values(pairs));
+
+    SRC_BONES.forEach(b => {
+      const el = document.createElement('div');
+      el.className = 'bone-chip' + (pairedSrcs.has(b) ? ' paired' : '') + (selSrc === b ? ' sel' : '');
+      el.textContent = b;
+      el.dataset.bone = b;
+      el.addEventListener('click', () => {
+        selSrc = selSrc === b ? null : b;
+        renderChips();
+        statusEl.textContent = selSrc ? `Selected: ${selSrc}. Now click a target bone.` : '';
+      });
+      srcList.appendChild(el);
+    });
+
+    TGT_BONES.forEach(b => {
+      const el = document.createElement('div');
+      el.className = 'bone-chip' + (pairedTgts.has(b) ? ' paired' : '');
+      el.textContent = b;
+      el.addEventListener('click', () => {
+        if (!selSrc) { statusEl.textContent = 'Select a source bone first.'; return; }
+        if (pairedTgts.has(b)) { statusEl.textContent = `${b} is already mapped.`; return; }
+        if (pairs[selSrc]) delete pairs[selSrc];
+        pairs[selSrc] = b;
+        selSrc = null;
+        renderChips();
+        drawLines();
+        scoreEl.textContent = Object.keys(pairs).length;
+        statusEl.textContent = `Mapped ${Object.keys(pairs).length} / ${TOTAL}`;
+      });
+      tgtList.appendChild(el);
+    });
+
+    scoreEl.textContent = Object.keys(pairs).length;
+  }
+
+  function drawLines() {
+    const centerBox = document.getElementById('mapper-center-box');
+    const cRect = centerBox.getBoundingClientRect();
+    const srcRect = srcList.getBoundingClientRect();
+    const tgtRect = tgtList.getBoundingClientRect();
+    const lines = [];
+    Object.entries(pairs).forEach(([src, tgt]) => {
+      const sEl = srcList.querySelector(`[data-bone="${src}"]`);
+      const tEl = Array.from(tgtList.children).find(c => c.textContent === tgt);
+      if (!sEl || !tEl) return;
+      const sr = sEl.getBoundingClientRect();
+      const tr = tEl.getBoundingClientRect();
+      const x1 = sr.right - cRect.left;
+      const y1 = sr.top + sr.height/2 - cRect.top;
+      const x2 = tr.left - cRect.left;
+      const y2 = tr.top + tr.height/2 - cRect.top;
+      lines.push(`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="var(--accent)" stroke-opacity="0.5" stroke-width="1.5"/>`);
+    });
+    linesSvg.innerHTML = lines.join('');
+  }
+
+  document.getElementById('mapper-check-btn').addEventListener('click', () => {
+    let correct = 0;
+    Object.entries(pairs).forEach(([s, t]) => { if (CORRECT[s] === t) correct++; });
+    const wrong = Object.keys(pairs).length - correct;
+    const missing = TOTAL - Object.keys(pairs).length;
+    statusEl.textContent = correct === TOTAL
+      ? `Perfect! All ${TOTAL} bones correctly mapped.`
+      : `${correct} correct, ${wrong} wrong, ${missing} unmapped.`;
+    statusEl.style.color = correct === TOTAL ? 'var(--green)' : 'var(--amber)';
+  });
+
+  document.getElementById('mapper-hint-btn').addEventListener('click', () => {
+    const unmapped = SRC_BONES.filter(b => !pairs[b]);
+    if (!unmapped.length) return;
+    const b = unmapped[0];
+    pairs[b] = CORRECT[b];
+    renderChips(); drawLines();
+    statusEl.textContent = `Revealed: ${b} → ${CORRECT[b]}`;
+    statusEl.style.color = 'var(--muted)';
+  });
+
+  document.getElementById('mapper-reset-btn').addEventListener('click', () => {
+    pairs = {}; selSrc = null;
+    renderChips(); drawLines();
+    statusEl.textContent = ''; statusEl.style.color = '';
+  });
+
+  document.getElementById('mapper-total').textContent = TOTAL;
+  renderChips();
+
+  // Redraw lines on scroll/resize
+  const obs = new ResizeObserver(() => setTimeout(drawLines, 30));
+  obs.observe(document.getElementById('panel-bonemap'));
+}
+
+// ══════════════════════════════════════════════════════════════
+// SPINE LAB
+// ══════════════════════════════════════════════════════════════
+function initSpineLab() {
+  const SRC_BONES = 3, SRC_LEN = 36, TGT_LEN = 22;
+  const SPINE_W = 120, SPINE_H = 220, BASE_X = 60, BASE_Y = 205;
+
+  let mode = 'even';
+
+  function chainSvg(totalBend, boneCount, boneLen, m, accent) {
+    const pts = M.computeSpineChain(totalBend, boneCount, { x: BASE_X, y: BASE_Y }, boneLen, m);
+    const per = M.distributeRotationWeighted(totalBend, boneCount, m);
+    const parts = [];
+    parts.push(`<svg viewBox="0 0 ${SPINE_W} ${SPINE_H}" class="svg-host" width="100" height="${SPINE_H}">`);
+    // base indicator
+    parts.push(`<line x1="${BASE_X-18}" y1="${BASE_Y}" x2="${BASE_X+18}" y2="${BASE_Y}" stroke="currentColor" stroke-opacity="0.15" stroke-width="1.5"/>`);
+    for (let i = 0; i < pts.length - 1; i++) {
+      const col = accent ? 'var(--purple)' : 'currentColor';
+      parts.push(`<line x1="${pts[i].x.toFixed(1)}" y1="${pts[i].y.toFixed(1)}" x2="${pts[i+1].x.toFixed(1)}" y2="${pts[i+1].y.toFixed(1)}" stroke="${col}" stroke-width="4" stroke-linecap="round"/>`);
+      parts.push(`<circle cx="${pts[i].x.toFixed(1)}" cy="${pts[i].y.toFixed(1)}" r="5" fill="${col}" opacity="0.8"/>`);
+    }
+    const last = pts[pts.length-1];
+    parts.push(`<circle cx="${last.x.toFixed(1)}" cy="${last.y.toFixed(1)}" r="5" fill="${accent?'var(--purple)':'currentColor'}" opacity="0.8"/>`);
+    parts.push(`</svg>`);
+    return parts.join('');
+  }
+
+  function updatePerBone(bend, count) {
+    const per = M.distributeRotationWeighted(bend, count, mode);
+    const el = document.getElementById('spine-per-bone');
+    el.innerHTML = per.map((v, i) =>
+      `<div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+        <span style="color:var(--muted)">Bone ${i+1}</span>
+        <div style="flex:1;height:3px;background:var(--border);border-radius:2px;overflow:hidden">
+          <div style="width:${Math.min(v/bend*100,100).toFixed(1)}%;height:100%;background:var(--purple)"></div>
+        </div>
+        <span style="color:var(--purple);min-width:40px;text-align:right">${v.toFixed(1)}°</span>
+      </div>`
+    ).join('');
+  }
+
+  function render() {
+    const bend  = Number(document.getElementById('spine-bend').value);
+    const count = Number(document.getElementById('spine-count').value);
+    document.getElementById('spine-bend-v').textContent  = `${bend}°`;
+    document.getElementById('spine-count-v').textContent = count;
+    document.getElementById('spine-tgt-label').textContent = `Target (${count} bones, ${mode})`;
+    document.getElementById('spine-src-host').innerHTML = chainSvg(bend, SRC_BONES, SRC_LEN, 'even', false);
+    document.getElementById('spine-tgt-host').innerHTML = chainSvg(bend, count, TGT_LEN, mode, true);
+    updatePerBone(bend, count);
+  }
+
+  document.getElementById('spine-bend').addEventListener('input', render);
+  document.getElementById('spine-count').addEventListener('input', render);
+  document.querySelectorAll('[data-spine-mode]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      mode = btn.dataset.spineMode;
+      document.querySelectorAll('[data-spine-mode]').forEach(b => b.classList.toggle('on', b === btn));
+      render();
+    });
+  });
+
+  render();
+}
+
+// ══════════════════════════════════════════════════════════════
+// QUIZ
+// ══════════════════════════════════════════════════════════════
+function initQuiz() {
+  const QS = [
+    {
+      q: 'Why must source and target skeletons use the same bind pose (or have a correction offset) before retargeting?',
+      choices: [
+        'Without it, bone names cannot be matched between the two rigs.',
+        'Animation rotations are stored relative to the bind pose, so mismatched poses cause the motion to aim in the wrong direction.',
+        'IK solvers require identical bind poses to converge.',
+        'It prevents the skeleton from exceeding joint limits during playback.',
+      ],
+      correct: 1,
+    },
+    {
+      q: 'What is the key difference between rotation-only retargeting and translation-copy retargeting?',
+      choices: [
+        'Rotation-only is faster to compute; translation-copy produces higher quality.',
+        'Translation-copy is used for root bones; rotation-only cannot animate a character moving through the world.',
+        'Rotation-only preserves motion intent across different proportions; naive translation copy causes feet to float or sink when leg lengths differ.',
+        'There is no practical difference — engines treat them identically.',
+      ],
+      correct: 2,
+    },
+    {
+      q: 'A source rig has 3 spine bones; the target has 5. What is the correct approach?',
+      choices: [
+        'Map bones 1:1 and leave the extra 2 target bones unanimated.',
+        'Distribute the total source spine arc proportionally across all 5 target bones.',
+        'Collapse the 3 source bones into 1 before retargeting.',
+        'Only retarget the pelvis and skip the spine entirely.',
+      ],
+      correct: 1,
+    },
+    {
+      q: 'In a two-bone IK solve (hip–knee–ankle), what does the law of cosines determine?',
+      choices: [
+        'The world-space position of the hip joint.',
+        'How much blend weight to apply between FK and IK.',
+        'The angle at the hip so the ankle can reach the target while the knee stays at the correct distance from both.',
+        'The velocity of the foot contact needed to detect ground strikes.',
+      ],
+      correct: 2,
+    },
+    {
+      q: 'When does a retarget IK post-pass typically activate its foot-plant solve?',
+      choices: [
+        'On every single frame, regardless of what the foot is doing.',
+        'Only on the first and last frames of each clip.',
+        'On frames where the source animation indicates the foot is in contact with the ground (low foot velocity, near ground height).',
+        'Never — IK is only used for aiming, not for foot placement.',
+      ],
+      correct: 2,
+    },
+    {
+      q: 'Why might a twist bone on the source rig cause problems during retargeting?',
+      choices: [
+        'Twist bones increase polygon count on the target mesh.',
+        'The engine cannot read rotation data from twist bones.',
+        'Twist bones are helper joints designed for deformation, not semantic motion — mapping them to unrelated target bones injects unintended twist rotations.',
+        'Twist bones always produce Euler gimbal lock.',
+      ],
+      correct: 2,
+    },
+  ];
+
+  let answered = 0;
+  const container = document.getElementById('quiz-questions');
+  const resultDiv = document.getElementById('quiz-result');
+  const keys = ['A','B','C','D'];
+
+  QS.forEach((q, qi) => {
+    const card = document.createElement('div');
+    card.className = 'qcard';
+    card.style.marginBottom = '14px';
+    card.style.maxWidth = '680px';
+
+    let qHtml = `<div class="qcard-q"><span>${qi+1}.</span>${q.q}</div><div class="choice-list">`;
+    q.choices.forEach((c, ci) => {
+      qHtml += `<div class="choice" data-qi="${qi}" data-ci="${ci}" tabindex="0" role="button" aria-label="${keys[ci]}: ${c}"><span class="choice-key">${keys[ci]}</span><span>${c}</span></div>`;
+    });
+    qHtml += '</div>';
+    card.innerHTML = qHtml;
+    container.appendChild(card);
+
+    card.querySelectorAll('.choice').forEach(ch => {
+      const activate = () => {
+        if (ch.classList.contains('disabled')) return;
+        const ci = Number(ch.dataset.ci);
+        const correct = ci === q.correct;
+        card.querySelectorAll('.choice').forEach(c2 => {
+          c2.classList.add('disabled');
+          if (Number(c2.dataset.ci) === q.correct) c2.classList.add('correct');
+          else if (c2 === ch && !correct) c2.classList.add('wrong');
+        });
+        card.classList.add(correct ? 'answered-right' : 'answered-wrong');
+        answered++;
+        if (answered === QS.length) showResult();
+      };
+      ch.addEventListener('click', activate);
+      ch.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(); } });
+    });
+  });
+
+  function showResult() {
+    let score = 0;
+    document.querySelectorAll('.qcard').forEach(c => { if (c.classList.contains('answered-right')) score++; });
+    const pct = Math.round(score / QS.length * 100);
+    resultDiv.style.display = 'block';
+    document.getElementById('quiz-score-num').textContent = `${score}/${QS.length}`;
+    document.getElementById('quiz-score-label').textContent =
+      pct === 100 ? 'Perfect — you have a solid grasp of the retargeting pipeline.' :
+      pct >= 80   ? 'Strong result. Review the sections you missed and retry.' :
+                    'Keep going — revisit the earlier sections and try again.';
+  }
+
+  document.getElementById('quiz-retry-btn').addEventListener('click', () => {
+    answered = 0;
+    resultDiv.style.display = 'none';
+    container.querySelectorAll('.choice').forEach(c => {
+      c.classList.remove('disabled','correct','wrong');
+    });
+    container.querySelectorAll('.qcard').forEach(c => {
+      c.classList.remove('answered-right','answered-wrong');
+    });
+  });
+}
+
+// ══════════════════════════════════════════════════════════════
+// Boot
+// ══════════════════════════════════════════════════════════════
+const INITS = {
+  pipeline: initPipeline,
+  bindpose: initBindPose,
+  walkcycle: initWalkCycle,
+  ik: initIK,
+  bonemap: initBoneMapper,
+  spine: initSpineLab,
+  quiz: initQuiz,
+};
+
+activateTab('pipeline');
+
+})();
+</script>
+</body>
+</html>

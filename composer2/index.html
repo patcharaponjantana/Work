@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Interactive tutorial — skeletal animation retargeting</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="quiz.cjs" defer></script>
+    <script src="interactive.js" defer></script>
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <div class="wrap">
+      <header class="hero">
+        <h1>Skeletal animation retargeting</h1>
+        <p class="lede">
+          A hands-on, engine-agnostic tour of how motion is reused across characters with different rigs — bind poses,
+          bone maps, scale, root motion, IK touches, and practical pitfalls.
+        </p>
+        <p class="howto">
+          <strong>How to use:</strong> open this file in a desktop browser (<code>index.html</code>). Every section has
+          at least one interactive widget — try the sliders, click joints, toggle modes, and finish with the quiz.
+        </p>
+      </header>
+
+      <div class="layout">
+        <nav class="toc" aria-label="Table of contents">
+          <p class="toc-title">On this page</p>
+          <ul>
+            <li><a href="#intro">What retargeting is</a></li>
+            <li><a href="#bind-pose">Bind pose and hierarchy</a></li>
+            <li><a href="#bone-map">Bone mapping</a></li>
+            <li><a href="#walk-cycle">Walk cycle retarget</a></li>
+            <li><a href="#scale">Scale and translations</a></li>
+            <li><a href="#spine">Spine distribution</a></li>
+            <li><a href="#root-motion">Root motion</a></li>
+            <li><a href="#ik">IK vs FK highlights</a></li>
+            <li><a href="#pitfalls">Pitfalls checklist</a></li>
+            <li><a href="#recap">Recap and quiz</a></li>
+            <li><a href="#glossary">Glossary</a></li>
+          </ul>
+        </nav>
+
+        <main id="main">
+          <div class="stepper" data-role="section-stepper" aria-label="Section quick jump"></div>
+
+          <!-- ═══════════════════════════════════════════════════════ -->
+          <section id="intro" aria-labelledby="intro-heading">
+            <h2 id="intro-heading">What retargeting is</h2>
+            <p>
+              <strong>Retargeting</strong> means taking animation that was authored or captured on one skeleton and
+              playing it on another skeleton whose proportions, joint count, or naming differs. Game teams reuse mocap,
+              locomotion libraries, and cinematic clips across heroes, NPCs, and creatures by retargeting instead of
+              re-keying everything per mesh.
+            </p>
+            <p>
+              Pipelines still differ per engine, but the problems repeat: alignment of reference poses, matching logical
+              joints, deciding how much translation to carry over, and fixing contacts (especially feet) after the
+              approximation.
+            </p>
+            <p class="engine-callout">
+              Unreal Engine exposes retarget chains and IK rigs; Unity uses Humanoids and Avatar mappings with muscle
+              limits — different UI, same underlying questions this tutorial walks through.
+            </p>
+          </section>
+
+          <!-- ═══════════════════════════════════════════════════════ -->
+          <section id="bind-pose" aria-labelledby="bind-heading">
+            <h2 id="bind-heading">Bind pose and hierarchy</h2>
+            <p>
+              Each skeletal mesh stores vertices weighted to joints. The <strong>bind (reference) pose</strong> is the
+              neutral pose used when binding skin weights — often a T-pose or an engine-specific relaxed stance.
+              Animation clips store transforms relative to that convention.
+            </p>
+            <p>
+              Retargeting compares logical rotations along parent chains: pelvis → spine → chest → neck → head, or
+              shoulder → elbow → wrist. If source and target bind poses disagree (arms down vs T-pose), rotations from
+              motion capture may aim the wrong way until you apply an offset pose or convert through a shared reference.
+            </p>
+            <div class="note">
+              <p>
+                <strong>Takeaway:</strong> stabilize bind poses early. Alignment reduces mysterious 90° twists and makes
+                bone maps trustworthy before you tune IK.
+              </p>
+            </div>
+
+            <!-- Interactive: bind pose mismatch visualizer -->
+            <div class="interactive-panel" data-widget="bind-pose-vis" aria-labelledby="bpm-title">
+              <header>
+                <h4 id="bpm-title">Bind pose mismatch — arm correction demo</h4>
+                <p class="hint">
+                  Step through three states to see how a T-pose source and an A-pose target produce different results
+                  when the same animation is applied with and without a bind pose offset correction.
+                </p>
+              </header>
+              <div class="step-buttons" role="group" aria-label="Demo states">
+                <button type="button" data-bpm-state="bindpose">1. Bind poses</button>
+                <button type="button" data-bpm-state="naive">2. Naive copy (wrong)</button>
+                <button type="button" data-bpm-state="corrected">3. With correction</button>
+              </div>
+              <div data-role="bpm-svg" class="arm-demo-host"></div>
+              <p data-role="bpm-status" class="map-status" role="status" aria-live="polite"></p>
+            </div>
+          </section>
+
+          <!-- ═══════════════════════════════════════════════════════ -->
+          <section id="bone-map" aria-labelledby="bone-map-heading">
+            <h2 id="bone-map-heading">Bone mapping</h2>
+            <p>
+              A <strong>bone map</strong> pairs joints on the source skeleton with joints on the target skeleton. Engines
+              may infer maps from naming patterns, but artists usually verify shoulders, elbows, wrists, hips, knees,
+              ankles, spine levels, and neck.
+            </p>
+            <p>
+              High-end rigs add <strong>twist bones</strong> or helper joints for cloth and deformation. Those may need
+              explicit mappings, derivation rules (copy percentage from parent), or be omitted if the target rig is
+              simpler — omitting can flatten shoulders unless compensated elsewhere.
+            </p>
+
+            <div class="interactive-panel" data-widget="bone-map" aria-labelledby="bone-lab-title">
+              <header>
+                <h4 id="bone-lab-title">Bone mapping lab</h4>
+                <p class="hint">
+                  Pair joints source → target in order. Pelvis stays rooted (locked). Match spine, limbs, and neck/head
+                  to the tutorial reference.
+                </p>
+              </header>
+              <div class="bone-map-grid">
+                <div class="figure-wrap">
+                  <h5>Source skeleton</h5>
+                  <div data-role="source-svg"></div>
+                </div>
+                <div class="figure-wrap">
+                  <h5>Target skeleton (longer legs, wider arms)</h5>
+                  <div data-role="target-svg"></div>
+                </div>
+              </div>
+              <div class="interactive-toolbar">
+                <button type="button" data-action="reset-map">Reset pairs</button>
+                <button type="button" data-action="check-map">Check mapping</button>
+              </div>
+              <p class="map-status" data-role="map-status" role="status" aria-live="polite"></p>
+            </div>
+          </section>
+
+          <!-- ═══════════════════════════════════════════════════════ -->
+          <section id="walk-cycle" aria-labelledby="wc-heading">
+            <h2 id="wc-heading">Walk cycle retarget — live comparison</h2>
+            <p>
+              The most direct demonstration of the retarget problem: the same rotation values are applied to two
+              skeletons with different leg lengths. Watch where each character's ankles land relative to the ground line.
+            </p>
+            <p>
+              The source skeleton (left) has longer legs; the target (right) has shorter legs. Because rotations are
+              identical but bone lengths differ, the target's feet float above the ground — exactly the artifact that IK
+              post-processing is designed to fix.
+            </p>
+
+            <div class="interactive-panel" data-widget="walk-cycle" aria-labelledby="wc-panel-title">
+              <header>
+                <h4 id="wc-panel-title">Live walk retarget</h4>
+                <p class="hint">
+                  Same joint rotations, different bone lengths. The highlighted ankle (right skeleton) shows where the
+                  retargeted foot lands without any IK correction.
+                </p>
+              </header>
+              <div class="walk-grid">
+                <div class="figure-wrap">
+                  <h5>Source skeleton</h5>
+                  <div data-role="wc-source"></div>
+                </div>
+                <div class="figure-wrap">
+                  <h5>Target skeleton (shorter legs)</h5>
+                  <div data-role="wc-target"></div>
+                </div>
+              </div>
+              <div class="interactive-toolbar">
+                <button type="button" data-action="wc-play" aria-pressed="true">Pause</button>
+                <label class="inline-label" for="wc-speed">Speed</label>
+                <select id="wc-speed" data-role="wc-speed" class="speed-select">
+                  <option value="0.4">0.4×</option>
+                  <option value="0.7">0.7×</option>
+                  <option value="1" selected>1×</option>
+                  <option value="1.5">1.5×</option>
+                </select>
+              </div>
+              <p data-role="wc-status" class="map-status" role="status" aria-live="polite"></p>
+            </div>
+          </section>
+
+          <!-- ═══════════════════════════════════════════════════════ -->
+          <section id="scale" aria-labelledby="scale-heading">
+            <h2 id="scale-heading">Scale and translations</h2>
+            <p>
+              Motion capture often includes joint translations in addition to rotations. When the target skeleton is
+              taller or shorter, copying translations verbatim stretches limbs or collapses them; feet miss the ground or
+              bury into it. Many pipelines favor <strong>rotation-driven retargeting</strong> relative to bind pose and
+              selectively retarget translations for props or root motion only.
+            </p>
+            <p>
+              Skeleton vs actor scale also interacts with physics capsules and attachment sockets — always sanity-check
+              scale before blaming the retarget solver.
+            </p>
+
+            <div class="interactive-panel" data-widget="proportion-demo" aria-labelledby="prop-demo-title">
+              <header>
+                <h4 id="prop-demo-title">Proportion mismatch intuition</h4>
+                <p class="hint">
+                  Slide to exaggerate leg length while imagining translations copied from a shorter performer onto this
+                  rig. Watch vertical gap versus the ground line.
+                </p>
+              </header>
+              <div data-role="prop-svg"></div>
+              <div class="slider-row">
+                <label for="leg-slider">Leg length factor</label>
+                <input
+                  id="leg-slider"
+                  data-role="leg-slider"
+                  type="range"
+                  min="0"
+                  max="100"
+                  value="50"
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                  aria-valuenow="50"
+                />
+              </div>
+              <p data-role="prop-explain" class="map-status" aria-live="polite"></p>
+            </div>
+          </section>
+
+          <!-- ═══════════════════════════════════════════════════════ -->
+          <section id="spine" aria-labelledby="spine-heading">
+            <h2 id="spine-heading">Spine distribution</h2>
+            <p>
+              A common source–target mismatch is spine bone count: a source rig might have 3 spine joints (lumbar,
+              thoracic, cervical) while the target has 5. Naively copying each rotation 1:1 leaves 2 bones with no data;
+              the correct approach is to <strong>distribute the total arc evenly</strong> across however many bones the
+              target has.
+            </p>
+            <p>
+              The same principle applies in reverse: compressing a 5-bone spine into 3 target bones sums adjacent
+              rotations. The total arc is preserved; only the per-joint granularity changes.
+            </p>
+
+            <div class="interactive-panel" data-widget="spine-dist" aria-labelledby="spine-panel-title">
+              <header>
+                <h4 id="spine-panel-title">Spine bend distribution</h4>
+                <p class="hint">
+                  Drag the slider to apply a forward bend. Left column: source (3-bone). Middle: target with 3 bones
+                  (same per-bone rotation). Right column (highlighted): target with 5 bones — same total arc, smoother
+                  result.
+                </p>
+              </header>
+              <div data-role="spine-svg"></div>
+              <div class="slider-row">
+                <label for="spine-slider">Total spine bend</label>
+                <input
+                  id="spine-slider"
+                  data-role="spine-slider"
+                  type="range"
+                  min="0"
+                  max="75"
+                  value="30"
+                  aria-valuemin="0"
+                  aria-valuemax="75"
+                  aria-valuenow="30"
+                />
+              </div>
+              <p data-role="spine-status" class="map-status" aria-live="polite"></p>
+            </div>
+          </section>
+
+          <!-- ═══════════════════════════════════════════════════════ -->
+          <section id="root-motion" aria-labelledby="root-heading">
+            <h2 id="root-heading">Root motion vs in-place cycles</h2>
+            <p>
+              <strong>Root motion</strong> moves the character through the world using translation extracted from the
+              animation — commonly from the pelvis or a dedicated root bone — instead of sliding an in-place cycle with
+              gameplay code driving velocity.
+            </p>
+            <p>
+              Retargeting root motion requires agreeing which bone carries trajectory, whether to compensate for hip bob,
+              and how to align cycle phases so feet don't fight the authored displacement. In-place loops stay planted by
+              stripping horizontal translation and looping cleanly for blend trees.
+            </p>
+
+            <div class="interactive-panel" data-widget="root-motion-demo" aria-labelledby="rm-panel-title">
+              <header>
+                <h4 id="rm-panel-title">In-place vs root motion</h4>
+                <p class="hint">
+                  Toggle modes to see the difference. In root motion mode, the blue pelvis dot drives world translation;
+                  in in-place mode, the character stays centered and gameplay code would supply velocity.
+                </p>
+              </header>
+              <div data-role="rm-svg" class="rm-host"></div>
+              <div class="interactive-toolbar">
+                <button type="button" data-action="rm-play" aria-pressed="true">Pause</button>
+                <button type="button" data-action="rm-mode" aria-pressed="false">Switch to root motion</button>
+              </div>
+              <p data-role="rm-status" class="map-status" role="status" aria-live="polite"></p>
+            </div>
+          </section>
+
+          <!-- ═══════════════════════════════════════════════════════ -->
+          <section id="ik" aria-labelledby="ik-heading">
+            <h2 id="ik-heading">IK vs FK highlights</h2>
+            <p>
+              Forward kinematics propagate rotations down chains; inverse kinematics solve joint angles to reach targets
+              (hands on props, feet on slopes). Retargeting rarely preserves perfect foot plants — slight pelvis drift or
+              proportion error introduces skate.
+            </p>
+            <p>
+              Foot IK post-processes adjust ankles/knees to keep toes planted within tolerance. Full-body IK can
+              stabilize grabs during aiming. Each solve adds tuning cost and can conflict with strong hip translation;
+              teams balance IK weight per locomotion state.
+            </p>
+            <div class="note">
+              <p>
+                <strong>Takeaway:</strong> treat IK as polish on top of a sane rotation retarget, not a substitute for a
+                wrong bone map.
+              </p>
+            </div>
+
+            <!-- Interactive: IK foot plant demo -->
+            <div class="interactive-panel" data-widget="ik-demo" aria-labelledby="ik-panel-title">
+              <header>
+                <h4 id="ik-panel-title">IK foot plant — terrain demo</h4>
+                <p class="hint">
+                  Drag the terrain slider to change ground height. Toggle IK to see the leg solve from FK-only floating
+                  or penetrating to a pinned foot contact. The faint ghost circle shows where FK would place the ankle.
+                </p>
+              </header>
+              <div data-role="ik-svg" class="ik-host"></div>
+              <div class="slider-row">
+                <label for="ik-ground-slider">Terrain height</label>
+                <input
+                  id="ik-ground-slider"
+                  data-role="ik-ground-slider"
+                  type="range"
+                  min="120"
+                  max="210"
+                  value="170"
+                  aria-valuemin="120"
+                  aria-valuemax="210"
+                  aria-valuenow="170"
+                />
+              </div>
+              <div class="interactive-toolbar">
+                <button type="button" data-action="ik-toggle" aria-pressed="false">Enable IK correction</button>
+              </div>
+              <p data-role="ik-status" class="map-status" role="status" aria-live="polite"></p>
+            </div>
+          </section>
+
+          <!-- ═══════════════════════════════════════════════════════ -->
+          <section id="pitfalls" aria-labelledby="pitfalls-heading">
+            <h2 id="pitfalls-heading">Pitfalls checklist</h2>
+            <ul>
+              <li>Mismatched bind poses between source clips and target rig.</li>
+              <li>Missing bones on the target (fingers, spine splits, facial rigs) silencing channels.</li>
+              <li>
+                Extreme twists near gimbal regions magnifying small quaternion differences across engines or sampling
+                rates.
+              </li>
+              <li>
+                Over-mapping twist joints onto unrelated bones, producing corkscrew elbows until constraints clamp
+                motion.
+              </li>
+              <li>Ignoring scale factors on imported meshes versus skeleton definitions.</li>
+              <li>Relying solely on translations from performance capture onto cartoon proportions.</li>
+            </ul>
+
+            <!-- Interactive: self-assessment checklist -->
+            <div class="interactive-panel" aria-labelledby="checklist-title">
+              <header>
+                <h4 id="checklist-title">Pre-retarget checklist</h4>
+                <p class="hint">Check off each step before handing off a retargeted clip for review.</p>
+              </header>
+              <ul class="checklist" id="pre-retarget-checklist">
+                <li><label><input type="checkbox" /> Bind poses aligned or offset-corrected on both rigs</label></li>
+                <li><label><input type="checkbox" /> Bone map verified for all logical joints (spine, limbs, neck, head)</label></li>
+                <li><label><input type="checkbox" /> Translation policy decided (rotation-only vs. root-only)</label></li>
+                <li><label><input type="checkbox" /> Foot-plant IK pass applied and tuned</label></li>
+                <li><label><input type="checkbox" /> Root motion bone identified and cycle phases aligned</label></li>
+                <li><label><input type="checkbox" /> Twist bones explicitly mapped or suppressed</label></li>
+                <li><label><input type="checkbox" /> Scale factors checked on both source and target assets</label></li>
+              </ul>
+              <p class="map-status" data-role="checklist-status" role="status" aria-live="polite"></p>
+            </div>
+          </section>
+
+          <!-- ═══════════════════════════════════════════════════════ -->
+          <section id="recap" aria-labelledby="recap-heading">
+            <h2 id="recap-heading">Recap and quiz</h2>
+            <p>
+              Stable bind poses and explicit bone maps translate logical motion between rigs. Rotation-centric
+              retargeting survives proportion differences better than naive translation copy; root motion policies define
+              how characters travel; foot IK cleans residual sliding after approximations.
+            </p>
+
+            <div class="quiz" data-role="quiz">
+              <h3>Knowledge check</h3>
+              <form>
+                <div data-role="quiz-questions"></div>
+                <div class="quiz-actions">
+                  <button type="submit" data-action="submit-quiz">Grade quiz</button>
+                  <button type="button" data-action="reset-quiz">Clear selections</button>
+                </div>
+              </form>
+              <div class="quiz-result" data-role="quiz-result" tabindex="-1" hidden>
+                <p data-role="quiz-score"></p>
+                <p data-role="quiz-detail"></p>
+              </div>
+            </div>
+          </section>
+
+          <!-- ═══════════════════════════════════════════════════════ -->
+          <section id="glossary" aria-labelledby="glossary-heading">
+            <h2 id="glossary-heading">Glossary</h2>
+            <details class="glossary-disclosure">
+              <summary>Bind / reference pose</summary>
+              <p>
+                Neutral skeleton orientation used when skinning a mesh; animation data is interpreted relative to this
+                baseline.
+              </p>
+            </details>
+            <details class="glossary-disclosure">
+              <summary>Bone map</summary>
+              <p>Table pairing source joints to target joints so animation channels have destinations.</p>
+            </details>
+            <details class="glossary-disclosure">
+              <summary>Retargeting</summary>
+              <p>Transferring motion authored on skeleton A onto skeleton B via pose alignment and mapping rules.</p>
+            </details>
+            <details class="glossary-disclosure">
+              <summary>Root motion</summary>
+              <p>
+                Translation embedded in animation that moves the actor through world space instead of staying in-place.
+              </p>
+            </details>
+            <details class="glossary-disclosure">
+              <summary>Twist bone</summary>
+              <p>Helper joint splitting twist across a limb to preserve volume during deformation.</p>
+            </details>
+            <details class="glossary-disclosure">
+              <summary>Two-bone IK</summary>
+              <p>
+                Inverse kinematics solve for a two-joint chain (hip–knee–ankle or shoulder–elbow–wrist) using the law of
+                cosines to position the end effector at a target location.
+              </p>
+            </details>
+            <details class="glossary-disclosure">
+              <summary>Spine distribution</summary>
+              <p>
+                Technique that spreads a total spine arc evenly across N target joints when the source and target have
+                different spine bone counts.
+              </p>
+            </details>
+          </section>
+
+          <footer class="page-footer">
+            <p>Standalone tutorial asset — no network calls. Customize copy or visuals freely for your team wiki.</p>
+          </footer>
+        </main>
+      </div>
+    </div>
+  </body>
+</html>

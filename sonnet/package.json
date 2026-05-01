@@ -1,0 +1,9 @@
+{
+  "name": "retargeting-workshop-sonnet",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Animation retargeting interactive workshop — Sonnet version",
+  "scripts": {
+    "test": "node --test retarget-math.test.mjs"
+  }
+}

@@ -1,0 +1,687 @@
+:root {
+  color-scheme: light dark;
+  --bg: canvas;
+  --fg: canvastext;
+  --muted: color-mix(in oklab, canvastext 65%, canvas);
+  --border: color-mix(in oklab, canvastext 18%, canvas);
+  --accent: LinkText;
+  --accent-bg: color-mix(in oklab, LinkText 12%, canvas);
+  --focus: Highlight;
+  --space: 1rem;
+  --maxw: 42rem;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, sans-serif;
+  line-height: 1.55;
+  font-size: 17px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  z-index: 999;
+  padding: 0.5rem 1rem;
+  background: var(--fg);
+  color: var(--bg);
+}
+.skip-link:focus {
+  left: 0.5rem;
+  top: 0.5rem;
+}
+
+.wrap {
+  max-width: calc(var(--maxw) + 4rem);
+  margin: 0 auto;
+  padding: var(--space) calc(var(--space) * 1.25);
+}
+
+.hero {
+  padding-bottom: calc(var(--space) * 1.5);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: calc(var(--space) * 1.5);
+}
+
+.hero h1 {
+  font-size: 1.65rem;
+  font-weight: 650;
+  margin: 0 0 0.35rem;
+  line-height: 1.25;
+}
+
+.lede {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.98rem;
+}
+
+.howto {
+  margin: 0.75rem 0 0;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.layout {
+  display: grid;
+  gap: calc(var(--space) * 1.75);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 900px) {
+  .layout {
+    grid-template-columns: 13rem minmax(0, 1fr);
+    align-items: start;
+  }
+}
+
+.toc {
+  position: sticky;
+  top: var(--space);
+  padding: 0;
+  margin: 0;
+}
+
+.toc-title {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 0 0 0.5rem;
+  color: var(--muted);
+}
+
+.toc ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.toc li {
+  margin: 0 0 0.35rem;
+}
+
+.toc a {
+  color: var(--accent);
+  text-decoration: none;
+  border-radius: 4px;
+}
+.toc a:hover {
+  text-decoration: underline;
+}
+.toc a:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+main section {
+  scroll-margin-top: calc(var(--space) * 1.25);
+}
+
+section h2 {
+  font-size: 1.22rem;
+  font-weight: 650;
+  margin: 0 0 0.65rem;
+}
+
+section h3 {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin: 1.25rem 0 0.4rem;
+}
+
+section p {
+  margin: 0 0 0.85rem;
+  max-width: var(--maxw);
+}
+
+section ul {
+  margin: 0 0 0.85rem;
+  padding-left: 1.25rem;
+  max-width: var(--maxw);
+}
+
+.note {
+  margin: 1rem 0;
+  padding: 0.65rem 0.85rem;
+  border-left: 3px solid var(--border);
+  background: var(--accent-bg);
+  max-width: var(--maxw);
+  font-size: 0.92rem;
+}
+
+.note p:last-child {
+  margin-bottom: 0;
+}
+
+.engine-callout {
+  font-size: 0.88rem;
+  color: var(--muted);
+  margin: -0.35rem 0 0.85rem;
+  max-width: var(--maxw);
+}
+
+.stepper {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0 0 1rem;
+  max-width: var(--maxw);
+}
+
+.stepper button {
+  font: inherit;
+  padding: 0.35rem 0.55rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease;
+}
+.stepper button[aria-current="true"] {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+.stepper button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+@keyframes rig-sway-yaw {
+  0%,
+  100% {
+    transform: rotate(-1.35deg);
+  }
+  50% {
+    transform: rotate(1.35deg);
+  }
+}
+
+@keyframes bone-dash-flow {
+  to {
+    stroke-dashoffset: -36;
+  }
+}
+
+@keyframes ground-breathe {
+  0%,
+  100% {
+    stroke-opacity: 0.28;
+  }
+  50% {
+    stroke-opacity: 0.48;
+  }
+}
+
+@keyframes foot-marker-pulse {
+  50% {
+    opacity: 0.78;
+    transform: scale(1.14);
+  }
+}
+
+@keyframes lean-leg {
+  0%,
+  100% {
+    transform: rotate(-0.85deg);
+  }
+  50% {
+    transform: rotate(0.85deg);
+  }
+}
+
+@keyframes joint-active-pulse {
+  50% {
+    opacity: 0.68;
+  }
+}
+
+@keyframes pair-pop {
+  0% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(1.26);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes quiz-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.bone-map-svg > .rig-sway {
+  transform-origin: 80px 168px;
+  transform-box: fill-box;
+  animation: rig-sway-yaw 4.8s ease-in-out infinite;
+}
+
+.bone-map-svg > .rig-sway--b {
+  animation-delay: -2.4s;
+}
+
+.bone-map-svg .bones .bone-line {
+  stroke-dasharray: 5 11;
+  stroke-dashoffset: 0;
+  animation: bone-dash-flow 2.9s linear infinite;
+}
+
+.prop-demo-svg > .rig-sway.prop-rig-sway {
+  transform-origin: 90px 175px;
+  transform-box: fill-box;
+  animation: rig-sway-yaw 5.2s ease-in-out infinite;
+}
+
+.prop-demo-svg .prop-leg-group {
+  transform-origin: 102px 182px;
+  transform-box: fill-box;
+  animation: lean-leg 3.9s ease-in-out infinite;
+  animation-delay: -1.95s;
+}
+
+.prop-demo-svg .ground-line {
+  animation: ground-breathe 3.6s ease-in-out infinite;
+}
+
+.prop-demo-svg .prop-leg-group .bone-line {
+  stroke-dasharray: 5 11;
+  stroke-dashoffset: 0;
+  animation: bone-dash-flow 2.4s linear infinite;
+}
+
+.prop-demo-svg .foot-marker {
+  transform-origin: center;
+  transform-box: fill-box;
+  animation: foot-marker-pulse 2.15s ease-in-out infinite;
+}
+
+.joint-dot.pair-flash {
+  animation: pair-pop 0.55s ease-out 1;
+}
+
+.quiz-result:not([hidden]) {
+  animation: quiz-reveal 340ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+.glossary dt {
+  font-weight: 600;
+  margin-top: 0.75rem;
+}
+.glossary dd {
+  margin: 0.25rem 0 0;
+  color: var(--muted);
+  max-width: var(--maxw);
+}
+
+details.glossary-disclosure {
+  margin: 1rem 0;
+  max-width: var(--maxw);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem 0.85rem;
+}
+
+details.glossary-disclosure summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.interactive-panel {
+  margin: 1.25rem 0;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  max-width: min(var(--maxw), 100%);
+}
+
+.interactive-panel header {
+  margin-bottom: 0.75rem;
+}
+.interactive-panel h4 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.interactive-panel .hint {
+  margin: 0.35rem 0 0;
+  font-size: 0.88rem;
+  color: var(--muted);
+}
+
+.bone-map-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 640px) {
+  .bone-map-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.figure-wrap {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem;
+  background: color-mix(in oklab, canvas 92%, canvastext);
+}
+
+.figure-wrap h5 {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.bone-map-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  overflow: visible;
+}
+
+.bone-hit {
+  cursor: pointer;
+  fill: transparent;
+  stroke: transparent;
+}
+
+.joint-dot {
+  cursor: pointer;
+  transition:
+    fill 160ms ease,
+    opacity 160ms ease;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.joint-dot:hover,
+.joint-dot[data-selected="true"] {
+  fill: LinkText;
+}
+
+.joint-dot[data-selected="true"] {
+  animation: joint-active-pulse 1s ease-in-out infinite;
+}
+
+.joint-dot[data-paired="true"] {
+  fill: color-mix(in oklab, canvastext 70%, canvas);
+}
+
+.interactive-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-top: 0.75rem;
+}
+
+.interactive-toolbar button {
+  font: inherit;
+  padding: 0.35rem 0.65rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  cursor: pointer;
+}
+.interactive-toolbar button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.map-status {
+  margin: 0.75rem 0 0;
+  font-size: 0.9rem;
+}
+
+.slider-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.75rem;
+  max-width: 20rem;
+}
+
+.slider-row label {
+  font-size: 0.88rem;
+  color: var(--muted);
+}
+
+.slider-row input[type="range"] {
+  width: 100%;
+}
+
+.quiz fieldset {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin: 0 0 1rem;
+  max-width: var(--maxw);
+}
+
+.quiz legend {
+  font-weight: 600;
+  padding: 0 0.35rem;
+}
+
+.quiz label.choice {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  margin: 0.45rem 0;
+  cursor: pointer;
+}
+
+.quiz label.choice input {
+  margin-top: 0.35rem;
+}
+
+.quiz-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.quiz-actions button {
+  font: inherit;
+  padding: 0.45rem 0.85rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  cursor: pointer;
+}
+.quiz-actions button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.quiz-result {
+  margin-top: 1rem;
+  padding: 0.75rem 0.85rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  max-width: var(--maxw);
+}
+
+.quiz-result[hidden] {
+  display: none;
+}
+
+footer.page-footer {
+  margin-top: calc(var(--space) * 2.5);
+  padding-top: var(--space);
+  border-top: 1px solid var(--border);
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+/* ── New: step buttons (bind pose demo) ──────────────────────── */
+.step-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
+}
+
+.step-buttons button {
+  font: inherit;
+  font-size: 0.88rem;
+  padding: 0.32rem 0.65rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease;
+}
+
+.step-buttons button.active-step {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+
+.step-buttons button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* ── New: arm demo host ──────────────────────────────────────── */
+.arm-demo-host {
+  margin: 0.5rem 0;
+}
+
+.arm-demo-svg {
+  width: 100%;
+  max-width: 300px;
+  height: auto;
+  display: block;
+}
+
+/* ── New: walk cycle grid ────────────────────────────────────── */
+.walk-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: 1fr;
+  margin-bottom: 0.5rem;
+}
+
+@media (min-width: 480px) {
+  .walk-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.walk-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+/* ── New: inline label + select row ────────────────────────── */
+.inline-label {
+  font-size: 0.88rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.speed-select {
+  font: inherit;
+  font-size: 0.88rem;
+  padding: 0.2rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+}
+
+/* ── New: IK demo host ───────────────────────────────────────── */
+.ik-host {
+  margin: 0.5rem 0;
+}
+
+.ik-demo-svg {
+  width: 100%;
+  max-width: 220px;
+  height: auto;
+  display: block;
+}
+
+/* ── New: root motion host ───────────────────────────────────── */
+.rm-host {
+  margin: 0.5rem 0;
+  overflow: hidden;
+}
+
+.rm-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  max-width: 520px;
+}
+
+/* ── New: spine demo ─────────────────────────────────────────── */
+.spine-svg {
+  width: 100%;
+  max-width: 320px;
+  height: auto;
+  display: block;
+}
+
+/* ── New: checklist ──────────────────────────────────────────── */
+.checklist {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 0.5rem;
+}
+
+.checklist li {
+  margin: 0 0 0.45rem;
+}
+
+.checklist label {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  cursor: pointer;
+  font-size: 0.92rem;
+}
+
+.checklist input[type="checkbox"] {
+  margin-top: 0.22rem;
+  flex-shrink: 0;
+  accent-color: var(--accent);
+}

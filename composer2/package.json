@@ -1,0 +1,14 @@
+{
+  "name": "composer2-retargeting-tutorial",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Interactive skeletal retargeting tutorial (static site + quiz unit tests)",
+  "type": "module",
+  "scripts": {
+    "test": "node --test quiz.test.mjs interactive.test.mjs",
+    "test:vitest": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.4"
+  }
+}
