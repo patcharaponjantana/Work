@@ -479,3 +479,106 @@ describe('LM', () => {
   it('LEFT_SHOULDER = 11', () => assert.equal(M.LM.LEFT_SHOULDER, 11));
   it('LEFT_HIP = 23', () => assert.equal(M.LM.LEFT_HIP, 23));
 });
+
+// ─── rotateVec3ByEuler ────────────────────────────────────────
+// Convention: Roll=Rz first, then Pitch=Rx, then Yaw=Ry
+// (intrinsic ZXY order: Ry · Rx · Rz · v)
+
+describe('rotateVec3ByEuler', () => {
+  it('is a function', () => assert.ok(typeof M.rotateVec3ByEuler === 'function'));
+
+  it('returns an object with x, y, z keys', () => {
+    const r = M.rotateVec3ByEuler({x:1,y:0,z:0}, 0, 0, 0);
+    assert.ok('x' in r && 'y' in r && 'z' in r);
+  });
+
+  it('identity — all zeros leave vector unchanged', () => {
+    const r = M.rotateVec3ByEuler({x:1,y:0,z:0}, 0, 0, 0);
+    assert.ok(approx(r.x, 1) && approx(r.y, 0) && approx(r.z, 0));
+  });
+
+  it('identity on Y-axis vector', () => {
+    const r = M.rotateVec3ByEuler({x:0,y:1,z:0}, 0, 0, 0);
+    assert.ok(approx(r.x, 0) && approx(r.y, 1) && approx(r.z, 0));
+  });
+
+  // ── Roll (Rz) tests ────────────────────────────────────────
+  it('Roll +90° — +X axis rotates to +Y axis', () => {
+    const r = M.rotateVec3ByEuler({x:1,y:0,z:0}, 0, 0, 90);
+    assert.ok(approx(r.x, 0, 1e-5) && approx(r.y, 1, 1e-5) && approx(r.z, 0, 1e-5));
+  });
+
+  it('Roll -90° — +X axis rotates to -Y axis', () => {
+    const r = M.rotateVec3ByEuler({x:1,y:0,z:0}, 0, 0, -90);
+    assert.ok(approx(r.x, 0, 1e-5) && approx(r.y, -1, 1e-5) && approx(r.z, 0, 1e-5));
+  });
+
+  it('Roll +90° leaves Z-axis unchanged', () => {
+    const r = M.rotateVec3ByEuler({x:0,y:0,z:1}, 0, 0, 90);
+    assert.ok(approx(r.x, 0, 1e-5) && approx(r.y, 0, 1e-5) && approx(r.z, 1, 1e-5));
+  });
+
+  // ── Pitch (Rx) tests ───────────────────────────────────────
+  it('Pitch +90° — +Y axis rotates to +Z axis', () => {
+    const r = M.rotateVec3ByEuler({x:0,y:1,z:0}, 90, 0, 0);
+    assert.ok(approx(r.x, 0, 1e-5) && approx(r.y, 0, 1e-5) && approx(r.z, 1, 1e-5));
+  });
+
+  it('Pitch -90° — +Y axis rotates to -Z axis', () => {
+    const r = M.rotateVec3ByEuler({x:0,y:1,z:0}, -90, 0, 0);
+    assert.ok(approx(r.x, 0, 1e-5) && approx(r.y, 0, 1e-5) && approx(r.z, -1, 1e-5));
+  });
+
+  it('Pitch +90° leaves X-axis unchanged', () => {
+    const r = M.rotateVec3ByEuler({x:1,y:0,z:0}, 90, 0, 0);
+    assert.ok(approx(r.x, 1, 1e-5) && approx(r.y, 0, 1e-5) && approx(r.z, 0, 1e-5));
+  });
+
+  // ── Yaw (Ry) tests ─────────────────────────────────────────
+  it('Yaw +90° — +X axis rotates to -Z axis', () => {
+    // Ry(90°) · {1,0,0} = {cos90, 0, -sin90} = {0, 0, -1}
+    const r = M.rotateVec3ByEuler({x:1,y:0,z:0}, 0, 90, 0);
+    assert.ok(approx(r.x, 0, 1e-5) && approx(r.y, 0, 1e-5) && approx(r.z, -1, 1e-5));
+  });
+
+  it('Yaw -90° — +X axis rotates to +Z axis', () => {
+    const r = M.rotateVec3ByEuler({x:1,y:0,z:0}, 0, -90, 0);
+    assert.ok(approx(r.x, 0, 1e-5) && approx(r.y, 0, 1e-5) && approx(r.z, 1, 1e-5));
+  });
+
+  it('Yaw +90° leaves Y-axis unchanged', () => {
+    const r = M.rotateVec3ByEuler({x:0,y:1,z:0}, 0, 90, 0);
+    assert.ok(approx(r.x, 0, 1e-5) && approx(r.y, 1, 1e-5) && approx(r.z, 0, 1e-5));
+  });
+
+  // ── Combination and properties ─────────────────────────────
+  it('Roll 90° then Pitch 90° on {1,0,0} yields {0,0,1}', () => {
+    // Rz(90°): {1,0,0}→{0,1,0}; Rx(90°): {0,1,0}→{0,0,1}; Ry(0°): unchanged
+    const r = M.rotateVec3ByEuler({x:1,y:0,z:0}, 90, 0, 90);
+    assert.ok(approx(r.x, 0, 1e-5) && approx(r.y, 0, 1e-5) && approx(r.z, 1, 1e-5));
+  });
+
+  it('preserves vector length', () => {
+    const v = {x:3, y:4, z:0};
+    const origLen = M.vec3len(v);
+    const r = M.rotateVec3ByEuler(v, 37, -55, 120);
+    assert.ok(approx(M.vec3len(r), origLen, 1e-6));
+  });
+
+  it('360° rotation returns to original vector', () => {
+    const v = {x:1, y:2, z:3};
+    const r = M.rotateVec3ByEuler(v, 360, 0, 0);
+    assert.ok(approx(r.x, v.x, 1e-5) && approx(r.y, v.y, 1e-5) && approx(r.z, v.z, 1e-5));
+  });
+
+  it('works with non-unit-length vectors (scale invariant in direction)', () => {
+    const v1 = {x:1,y:0,z:0};
+    const v5 = {x:5,y:0,z:0};
+    const r1 = M.rotateVec3ByEuler(v1, 45, 30, 60);
+    const r5 = M.rotateVec3ByEuler(v5, 45, 30, 60);
+    // r5 should be 5× r1
+    assert.ok(approx(r5.x, r1.x * 5, 1e-5));
+    assert.ok(approx(r5.y, r1.y * 5, 1e-5));
+    assert.ok(approx(r5.z, r1.z * 5, 1e-5));
+  });
+});

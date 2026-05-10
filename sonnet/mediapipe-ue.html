@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>MediaPipe → UE Soulslike Tutorial</title>
 <script src="mediapipe-ue.js"></script>
+<!-- MediaPipe Pose (loaded async; Rotation Lab lazily initialises them on first camera start) -->
+<script async src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script async src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+<script async src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -188,6 +192,21 @@ pre.code{
 .formula-box .fv{color:var(--amber)}
 .formula-box .fc{color:#546e7a;font-style:italic}
 .joint-sliders{display:flex;flex-direction:column;gap:4px}
+
+/* ── Rotation Lab ────────────────────────────────────────────── */
+.rl-dual{display:grid;grid-template-columns:240px 1fr;gap:16px;height:320px;min-height:280px}
+@media(max-width:720px){.rl-dual{grid-template-columns:1fr;height:auto}}
+.rl-3d-wrap{position:relative;border:1px solid var(--border);border-radius:10px;background:color-mix(in srgb,var(--surface2) 70%,#000);overflow:hidden;user-select:none}
+#rl-canvas3d{display:block;width:100%;height:100%;cursor:grab}
+#rl-canvas3d:active{cursor:grabbing}
+.rl-hint{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);font-size:11px;color:var(--muted);background:rgba(0,0,0,.45);padding:3px 10px;border-radius:4px;pointer-events:none;white-space:nowrap}
+.bone-list{display:flex;flex-direction:column;gap:2px;max-height:170px;overflow-y:auto;margin-bottom:10px}
+.bone-item{padding:4px 10px;border-radius:5px;border:1px solid transparent;cursor:pointer;font-size:12px;font-family:var(--mono);color:var(--muted);transition:color 80ms,background 80ms,border-color 80ms;white-space:nowrap}
+.bone-item:hover{background:var(--accent-hi);color:var(--text)}
+.bone-item.sel{background:var(--accent-dim);border-color:var(--accent);color:var(--accent)}
+.rl-axis-x{color:var(--red)}
+.rl-axis-y{color:var(--green)}
+.rl-axis-z{color:var(--accent)}
 </style>
 </head>
 <body>
@@ -203,6 +222,7 @@ pre.code{
     <button class="tab" data-tab="code">Python Code</button>
     <button class="tab" data-tab="tools">Free Tools</button>
     <button class="tab" data-tab="skellab">3D Skeleton Lab</button>
+    <button class="tab" data-tab="rotlab">Rotation Lab</button>
   </nav>
 </header>
 
@@ -672,6 +692,108 @@ pre.code{
       </div>
 
     </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<!-- TAB 9 — Rotation Lab                                       -->
+<!-- ══════════════════════════════════════════════════════════ -->
+<section class="panel" data-panel="rotlab" id="panel-rotlab">
+  <div>
+    <div class="pt">Joint Rotation Lab</div>
+    <div class="ps">Select a bone, then set its exact <strong>Pitch / Yaw / Roll</strong>. Both views update live via Forward Kinematics — this is <strong>Absolute Rotation</strong>: you stamp a rotation directly, independent of previous state.</div>
+  </div>
+
+  <!-- ── Dual viewport ────────────────────────────────────── -->
+  <div class="rl-dual">
+    <!-- Left: webcam (live) or static 2D FK view (manual) -->
+    <div class="fig-wrap" style="overflow:hidden;display:flex;flex-direction:column;position:relative">
+      <div class="fig-label" style="display:flex;justify-content:space-between;align-items:center;flex-shrink:0">
+        <span id="rl-view-label">Front View (2D)</span>
+        <button class="btn" id="rl-cam-btn" style="padding:2px 9px;font-size:11px;line-height:1.4">📷 Camera</button>
+      </div>
+      <!-- Manual mode: static SVG (shown when camera is off) -->
+      <svg id="rl-svg2d" viewBox="0 0 220 300" style="flex:1;width:100%;display:block"></svg>
+      <!-- Live mode: webcam canvas (shown when camera is on) -->
+      <canvas id="rl-webcam" style="display:none;width:100%;flex:1;min-height:0;background:#111"></canvas>
+      <!-- Status overlay -->
+      <div id="rl-cam-status" style="display:none;position:absolute;bottom:8px;left:50%;transform:translateX(-50%);font-size:11px;color:var(--text);background:rgba(0,0,0,.72);padding:3px 12px;border-radius:4px;pointer-events:none;white-space:nowrap"></div>
+    </div>
+    <!-- 3D orbitable view -->
+    <div class="rl-3d-wrap">
+      <canvas id="rl-canvas3d"></canvas>
+      <div class="rl-hint" id="rl-3d-hint">Drag to orbit &nbsp;·&nbsp; Scroll to zoom &nbsp;·&nbsp; Select bone below</div>
+    </div>
+  </div>
+
+  <!-- ── Controls ─────────────────────────────────────────── -->
+  <div class="g2">
+
+    <!-- Left: bone selector + rotation sliders -->
+    <div class="card">
+      <div class="card-title">Bone &amp; Rotation — <span id="rl-bone-name" style="color:var(--accent);font-family:var(--mono)">select a bone</span></div>
+
+      <!-- Bone picker list -->
+      <div class="bone-list" id="rl-bone-list"></div>
+
+      <!-- Pitch / Yaw / Roll sliders -->
+      <div id="rl-slider-panel">
+        <div class="ctrl-row">
+          <span class="ctrl-label rl-axis-x">Pitch (X-rot)</span>
+          <input class="slider" id="rl-pitch" type="range" min="-180" max="180" step="1" value="0" disabled/>
+          <span class="val" id="rl-pitch-v">0°</span>
+        </div>
+        <div class="ctrl-row">
+          <span class="ctrl-label rl-axis-y">Yaw (Y-rot)</span>
+          <input class="slider" id="rl-yaw" type="range" min="-180" max="180" step="1" value="0" disabled/>
+          <span class="val" id="rl-yaw-v">0°</span>
+        </div>
+        <div class="ctrl-row">
+          <span class="ctrl-label rl-axis-z">Roll (Z-rot)</span>
+          <input class="slider" id="rl-roll" type="range" min="-180" max="180" step="1" value="0" disabled/>
+          <span class="val" id="rl-roll-v">0°</span>
+        </div>
+
+        <!-- Live UE readout -->
+        <div class="readouts" style="margin-top:8px">
+          <div class="ro"><div class="ro-val" id="rl-ro-pitch" style="color:var(--red)">—</div><div class="ro-label">Pitch (°)</div></div>
+          <div class="ro"><div class="ro-val" id="rl-ro-yaw" style="color:var(--green)">—</div><div class="ro-label">Yaw (°)</div></div>
+          <div class="ro"><div class="ro-val" id="rl-ro-roll" style="color:var(--accent)">0</div><div class="ro-label">Roll (°)</div></div>
+        </div>
+      </div>
+
+      <!-- Preset buttons -->
+      <div class="btn-row" style="margin-top:12px">
+        <button class="btn" id="rl-preset-tpose">T-Pose</button>
+        <button class="btn" id="rl-preset-attack">⚔ Attack</button>
+        <button class="btn" id="rl-preset-guard">🛡 Guard</button>
+        <button class="btn" id="rl-preset-crouch">🦆 Crouch</button>
+      </div>
+    </div>
+
+    <!-- Right: explainer -->
+    <div class="card">
+      <div class="card-title" style="color:var(--green)">Absolute Rotation ✓ &nbsp;<span style="font-weight:400;font-size:11px;color:var(--muted)">(What you want)</span></div>
+      <div class="body-text">
+        <code style="font-family:var(--mono);font-size:12px;background:var(--surface3);border-radius:3px;padding:3px 8px;display:block;margin-bottom:10px">Joint i, set rotation to exactly 90°</code>
+        This is <strong>what most retargeting pipelines use</strong>. You don't care about previous state — you just stamp a new rotation directly each frame.<br><br>
+        <span style="color:var(--red)">●</span> <strong>Pitch</strong> = rotation around X-axis (nod forward/back).<br>
+        <span style="color:var(--green)">●</span> <strong>Yaw</strong> = rotation around Y-axis (turn left/right).<br>
+        <span style="color:var(--accent)">●</span> <strong>Roll</strong> = rotation around Z-axis (tilt sideways).<br><br>
+        In Unreal Engine each bone takes a <strong>FRotator in local space</strong> (relative to its parent bone):
+      </div>
+      <div class="formula-box" style="margin-top:10px">
+        <span class="fc">// UE Blueprint: SetBoneRotationByName</span><br>
+        bone_name: <span class="fv" id="rl-ue-bonename">"spine"</span><br>
+        rotation: <span class="fv" id="rl-ue-rot">(pitch=0, yaw=0, roll=0)</span>
+        <span class="fc"> ← local space</span><br><br>
+        <span class="fc">// FK chain: child = parent + rotate(tposeDir, p, y, r) × length</span>
+      </div>
+      <div class="body-text" style="margin-top:10px;font-size:12px">
+        <strong>How it works:</strong> For each bone the T-pose direction vector is stored at startup. <code style="font-size:11px;background:var(--surface3);border-radius:3px;padding:1px 5px;font-family:var(--mono)">rotateVec3ByEuler(tposeDir, pitch, yaw, roll)</code> produces the new direction, then the child joint position is placed along that direction at the fixed bone length.
+      </div>
+    </div>
+
   </div>
 </section>
 
@@ -1977,6 +2099,1068 @@ Roll  = 0°  <span class="fc">// not derivable from direction alone</span>`;
 
     // Re-draw on resize
     window.addEventListener('resize', () => { if (skelInited) draw(); });
+
+  })();
+
+  // ════════════════════════════════════════════════════════════
+  // TAB 9 — Rotation Lab
+  // ════════════════════════════════════════════════════════════
+  (function () {
+
+    // ── FK bone index constants ───────────────────────────────
+    // 100/101 are synthetic joints not in the MediaPipe 0-32 range
+    const PELVIS_IDX       = 100;
+    const MID_SHOULDER_IDX = 101;
+
+    // ── FK bone chain (MUST be top-down: parent resolved before child) ──
+    const FK_BONES = [
+      {id:'spine',   name:'Spine',        parent: PELVIS_IDX,       child: MID_SHOULDER_IDX},
+      {id:'neck',    name:'Neck / Head',  parent: MID_SHOULDER_IDX, child: 0},   // NOSE = head
+      {id:'l_clav',  name:'L Clavicle',  parent: MID_SHOULDER_IDX, child: 11},
+      {id:'r_clav',  name:'R Clavicle',  parent: MID_SHOULDER_IDX, child: 12},
+      {id:'l_uarm',  name:'L Upper Arm', parent: 11,               child: 13},
+      {id:'l_farm',  name:'L Forearm',   parent: 13,               child: 15},
+      {id:'r_uarm',  name:'R Upper Arm', parent: 12,               child: 14},
+      {id:'r_farm',  name:'R Forearm',   parent: 14,               child: 16},
+      {id:'l_hip',   name:'L Hip',       parent: PELVIS_IDX,       child: 23},
+      {id:'r_hip',   name:'R Hip',       parent: PELVIS_IDX,       child: 24},
+      {id:'l_thigh', name:'L Thigh',     parent: 23,               child: 25},
+      {id:'r_thigh', name:'R Thigh',     parent: 24,               child: 26},
+      {id:'l_shin',  name:'L Shin',      parent: 25,               child: 27},
+      {id:'r_shin',  name:'R Shin',      parent: 26,               child: 28},
+    ];
+
+    // ── Preset poses ─────────────────────────────────────────
+    const PRESETS = {
+      tpose: {},
+      attack: {
+        spine:  {pitch: -10, yaw:  0, roll:   0},
+        r_uarm: {pitch:   0, yaw: -20, roll:  90},
+        r_farm: {pitch: -20, yaw:  0, roll:   0},
+      },
+      guard: {
+        l_uarm: {pitch:  20, yaw:  0, roll: -90},
+        l_farm: {pitch: -50, yaw:  0, roll:   0},
+        r_uarm: {pitch:  20, yaw:  0, roll:  90},
+        r_farm: {pitch: -50, yaw:  0, roll:   0},
+      },
+      crouch: {
+        spine:   {pitch:  20, yaw:  0, roll:  0},
+        l_thigh: {pitch: -60, yaw:  0, roll:  0},
+        r_thigh: {pitch: -60, yaw:  0, roll:  0},
+        l_shin:  {pitch:  60, yaw:  0, roll:  0},
+        r_shin:  {pitch:  60, yaw:  0, roll:  0},
+      },
+    };
+
+    // ── T-pose data (MediaPipe normalized, matches defaultPose) ──
+    const RL_DEFAULT_LM = [
+      {x:.500,y:.070,z:.00}, // 0 NOSE
+      {x:.462,y:.090,z:.00},{x:.440,y:.090,z:.00},{x:.418,y:.090,z:.00},
+      {x:.538,y:.090,z:.00},{x:.560,y:.090,z:.00},{x:.582,y:.090,z:.00},
+      {x:.400,y:.110,z:.00},{x:.600,y:.110,z:.00},
+      {x:.468,y:.130,z:.00},{x:.532,y:.130,z:.00},
+      {x:.340,y:.280,z:.00}, // 11 L_SHOULDER
+      {x:.660,y:.280,z:.00}, // 12 R_SHOULDER
+      {x:.200,y:.430,z:.00}, // 13 L_ELBOW
+      {x:.800,y:.430,z:.00}, // 14 R_ELBOW
+      {x:.080,y:.570,z:.00}, // 15 L_WRIST
+      {x:.920,y:.570,z:.00}, // 16 R_WRIST
+      {x:.060,y:.630,z:.00},{x:.940,y:.630,z:.00},
+      {x:.055,y:.610,z:.00},{x:.945,y:.610,z:.00},
+      {x:.075,y:.590,z:.00},{x:.925,y:.590,z:.00},
+      {x:.380,y:.560,z:.00}, // 23 L_HIP
+      {x:.620,y:.560,z:.00}, // 24 R_HIP
+      {x:.370,y:.730,z:.00}, // 25 L_KNEE
+      {x:.630,y:.730,z:.00}, // 26 R_KNEE
+      {x:.360,y:.890,z:.00}, // 27 L_ANKLE
+      {x:.640,y:.890,z:.00}, // 28 R_ANKLE
+      {x:.350,y:.930,z:.00},{x:.650,y:.930,z:.00},
+      {x:.330,y:.970,z:.00},{x:.670,y:.970,z:.00},
+    ];
+
+    // ── State ─────────────────────────────────────────────────
+    let boneRots = {};
+    FK_BONES.forEach(b => { boneRots[b.id] = {pitch:0, yaw:0, roll:0}; });
+
+    let selectedBoneId = null;
+    let rlCamTheta = 0.3, rlCamPhi = -0.15;
+    let rlDragging = false, rlLastMouse = {x:0,y:0};
+    let rlCamDist  = 2.5;   // perspective focal distance; smaller = zoomed in
+
+    // ── Camera / live MediaPipe state ─────────────────────────
+    let cameraActive   = false;
+    let mpPose         = null;   // MediaPipe Pose instance
+    let mpCameraObj    = null;   // MediaPipe Camera helper
+    let mpVideoEl      = null;   // hidden <video> for camera feed
+    let liveLm         = null;   // latest 2-D normalised landmarks (33 items)
+    let liveWorldLm    = null;   // latest 3-D world landmarks (metres, origin mid-hip)
+
+    // ── Wrist-twist debug state ────────────────────────────────
+    // Computed each frame from world landmarks 14/16/18/20
+    let wristTwist = {
+      deg:       0,       // twist angle around the forearm axis (degrees)
+      reliable:  false,   // true when finger landmarks are confident
+      elbow_vis: 0,       // MediaPipe visibility of R elbow
+      wrist_vis: 0,       // MediaPipe visibility of R wrist
+      pinky_vis: 0,       // MediaPipe visibility of R pinky tip
+      index_vis: 0,       // MediaPipe visibility of R index tip
+    };
+
+    /**
+     * Compute right-wrist twist from MediaPipe world landmarks.
+     *
+     * Forearm axis = elbow(14) → wrist(16).
+     * Hand orientation = pinky(18) → index(20), projected ⊥ to forearm.
+     * Twist = angle of that projected vector around the forearm axis,
+     *         measured relative to "hand flat / palm-down" (world-up reference).
+     *
+     * NOTE: MediaPipe Pose hand landmarks are estimated – twist is moderately
+     * reliable when both fingers are clearly visible; less so for pure axial
+     * rotation that doesn't change body silhouette.
+     */
+    function computeWristTwist(worldLm) {
+      const elbow = worldLm[14];
+      const wrist = worldLm[16];
+      const pinky = worldLm[18];
+      const index = worldLm[20];
+
+      wristTwist.elbow_vis = elbow ? (elbow.visibility || 0) : 0;
+      wristTwist.wrist_vis = wrist ? (wrist.visibility || 0) : 0;
+      wristTwist.pinky_vis = pinky ? (pinky.visibility || 0) : 0;
+      wristTwist.index_vis = index ? (index.visibility || 0) : 0;
+
+      const MIN_VIS = 0.35;
+      if (!elbow || !wrist || !pinky || !index ||
+          wristTwist.elbow_vis < MIN_VIS || wristTwist.wrist_vis < MIN_VIS ||
+          wristTwist.pinky_vis < MIN_VIS || wristTwist.index_vis < MIN_VIS) {
+        wristTwist.reliable = false;
+        return;
+      }
+
+      // Forearm axis unit vector (body-space: y-up, z-forward)
+      const arm = M.vec3normalize({
+        x:  (wrist.x - elbow.x),
+        y: -(wrist.y - elbow.y),   // flip y (MP y-down → body y-up)
+        z: -(wrist.z - elbow.z),   // flip z (MP z-toward-cam → body z-forward)
+      });
+
+      // Hand-width vector: pinky → index (body-space)
+      const hw = {
+        x:  (index.x - pinky.x),
+        y: -(index.y - pinky.y),
+        z: -(index.z - pinky.z),
+      };
+
+      // Project hw perpendicular to the forearm axis
+      const dot = hw.x*arm.x + hw.y*arm.y + hw.z*arm.z;
+      const perp = M.vec3normalize({
+        x: hw.x - dot*arm.x,
+        y: hw.y - dot*arm.y,
+        z: hw.z - dot*arm.z,
+      });
+
+      // Reference direction: world-up (0,1,0) projected ⊥ to arm
+      const up = {x:0, y:1, z:0};
+      const upDot = up.x*arm.x + up.y*arm.y + up.z*arm.z;
+      const upRef = M.vec3normalize({
+        x: up.x - upDot*arm.x,
+        y: up.y - upDot*arm.y,
+        z: up.z - upDot*arm.z,
+      });
+
+      // Second tangent: arm × upRef
+      const tang = {
+        x: arm.y*upRef.z - arm.z*upRef.y,
+        y: arm.z*upRef.x - arm.x*upRef.z,
+        z: arm.x*upRef.y - arm.y*upRef.x,
+      };
+
+      const cosA = perp.x*upRef.x + perp.y*upRef.y + perp.z*upRef.z;
+      const sinA = perp.x*tang.x  + perp.y*tang.y  + perp.z*tang.z;
+      wristTwist.deg      = Math.round(Math.atan2(sinA, cosA) * 180 / Math.PI);
+      wristTwist.reliable = true;
+    }
+
+    // MediaPipe pose connections used for the webcam overlay drawing
+    const MP_POSE_CONN = [
+      [0,1],[1,2],[2,3],[3,7],[0,4],[4,5],[5,6],[6,8],
+      [9,10],
+      [11,12],[11,13],[13,15],[12,14],[14,16],
+      [11,23],[12,24],[23,24],
+      [23,25],[25,27],[24,26],[26,28],
+      [27,29],[29,31],[28,30],[30,32],
+    ];
+
+    // T-pose body-space positions and bone direction/length (filled by initTpose)
+    let tposeBodyPos = {};
+    let pelvisMP     = {x:0.5, y:0.56, z:0};
+
+    // ── T-pose initialisation ────────────────────────────────
+    function initTpose() {
+      const lm = RL_DEFAULT_LM;
+      pelvisMP = {
+        x: (lm[23].x + lm[24].x) / 2,
+        y: (lm[23].y + lm[24].y) / 2,
+        z: (lm[23].z + lm[24].z) / 2,
+      };
+      const midShMP = {
+        x: (lm[11].x + lm[12].x) / 2,
+        y: (lm[11].y + lm[12].y) / 2,
+        z: (lm[11].z + lm[12].z) / 2,
+      };
+
+      function mpToBody(mp) {
+        return {
+          x:  mp.x - pelvisMP.x,
+          y: -(mp.y - pelvisMP.y),
+          z:  mp.z - pelvisMP.z,
+        };
+      }
+
+      tposeBodyPos[PELVIS_IDX]       = {x:0, y:0, z:0};
+      tposeBodyPos[MID_SHOULDER_IDX] = mpToBody(midShMP);
+      for (let i = 0; i < lm.length; i++) {
+        tposeBodyPos[i] = mpToBody(lm[i]);
+      }
+
+      // Compute T-pose direction and bone length for each bone
+      FK_BONES.forEach(bone => {
+        const pPos = tposeBodyPos[bone.parent];
+        const cPos = tposeBodyPos[bone.child];
+        const dir  = M.vec3sub(cPos, pPos);
+        bone.length    = M.vec3len(dir);
+        bone.tposeDir  = M.vec3normalize(dir);
+      });
+    }
+
+    // ── FK compute ────────────────────────────────────────────
+    // Returns a map: joint-index → {x,y,z} in body space (Y-up, origin=pelvis)
+    function computeFK() {
+      const pos = {};
+      pos[PELVIS_IDX] = {x:0, y:0, z:0};
+
+      FK_BONES.forEach(bone => {
+        const pPos = pos[bone.parent];
+        if (!pPos || !bone.tposeDir) return;
+        const rot     = boneRots[bone.id] || {pitch:0, yaw:0, roll:0};
+        const rotated = M.rotateVec3ByEuler(bone.tposeDir, rot.pitch, rot.yaw, rot.roll);
+        const n       = M.vec3normalize(rotated);
+        pos[bone.child] = M.vec3add(pPos, M.vec3scale(n, bone.length));
+      });
+
+      return pos;
+    }
+
+    // ── 2D SVG renderer ──────────────────────────────────────
+    const SVG_NS   = 'http://www.w3.org/2000/svg';
+    const SVG_CX   = 110, SVG_CY = 135, SVG_SCALE = 235;
+
+    function bodyToSvg(p) {
+      return { x: SVG_CX + p.x * SVG_SCALE, y: SVG_CY - p.y * SVG_SCALE };
+    }
+
+    function boneColorForId(id) {
+      if (id === 'spine' || id === 'neck') return '#fbbf24';
+      if (id.startsWith('l') && (id.includes('arm') || id.includes('clav'))) return '#5b9cf6';
+      if (id.startsWith('r') && (id.includes('arm') || id.includes('clav'))) return '#a78bfa';
+      if (id.startsWith('l')) return '#4ade80';
+      if (id.startsWith('r')) return '#fb923c';
+      return '#7b879e';
+    }
+
+    function draw2D(fkPos) {
+      const svg = document.getElementById('rl-svg2d');
+      if (!svg) return;
+      svg.innerHTML = '';
+
+      // Floor guide line
+      const floorY = SVG_CY + 0.38 * SVG_SCALE;
+      const fl = document.createElementNS(SVG_NS, 'line');
+      fl.setAttribute('x1', '20'); fl.setAttribute('x2', '200');
+      fl.setAttribute('y1', floorY); fl.setAttribute('y2', floorY);
+      fl.setAttribute('stroke', 'rgba(255,255,255,0.07)'); fl.setAttribute('stroke-width', '1');
+      svg.appendChild(fl);
+
+      // Shoulder crossbar
+      if (fkPos[11] && fkPos[12]) {
+        const ln = document.createElementNS(SVG_NS, 'line');
+        const ps = bodyToSvg(fkPos[11]), pe = bodyToSvg(fkPos[12]);
+        ln.setAttribute('x1', ps.x); ln.setAttribute('y1', ps.y);
+        ln.setAttribute('x2', pe.x); ln.setAttribute('y2', pe.y);
+        ln.setAttribute('stroke', '#fbbf24'); ln.setAttribute('stroke-width', '1.5');
+        ln.setAttribute('opacity', '0.35'); svg.appendChild(ln);
+      }
+      // Hip crossbar
+      if (fkPos[23] && fkPos[24]) {
+        const ln = document.createElementNS(SVG_NS, 'line');
+        const ps = bodyToSvg(fkPos[23]), pe = bodyToSvg(fkPos[24]);
+        ln.setAttribute('x1', ps.x); ln.setAttribute('y1', ps.y);
+        ln.setAttribute('x2', pe.x); ln.setAttribute('y2', pe.y);
+        ln.setAttribute('stroke', '#fbbf24'); ln.setAttribute('stroke-width', '1.5');
+        ln.setAttribute('opacity', '0.35'); svg.appendChild(ln);
+      }
+
+      // Draw each FK bone
+      FK_BONES.forEach(bone => {
+        const pPos = fkPos[bone.parent];
+        const cPos = fkPos[bone.child];
+        if (!pPos || !cPos) return;
+        const pSvg = bodyToSvg(pPos), cSvg = bodyToSvg(cPos);
+        const isSel = bone.id === selectedBoneId;
+
+        const ln = document.createElementNS(SVG_NS, 'line');
+        ln.setAttribute('x1', pSvg.x); ln.setAttribute('y1', pSvg.y);
+        ln.setAttribute('x2', cSvg.x); ln.setAttribute('y2', cSvg.y);
+        ln.setAttribute('stroke', isSel ? '#fbbf24' : boneColorForId(bone.id));
+        ln.setAttribute('stroke-width', isSel ? '4.5' : '2.5');
+        ln.setAttribute('stroke-linecap', 'round');
+        ln.setAttribute('opacity', isSel ? '1' : '0.82');
+        svg.appendChild(ln);
+      });
+
+      // Draw joints
+      const drawn = new Set();
+      const JLABELS = {0:'HEAD',11:'L.SH',12:'R.SH',13:'L.EL',14:'R.EL',
+                       15:'L.WR',16:'R.WR',23:'L.HP',24:'R.HP',
+                       25:'L.KN',26:'R.KN',27:'L.AN',28:'R.AN'};
+
+      FK_BONES.forEach(bone => {
+        [bone.parent, bone.child].forEach(idx => {
+          if (drawn.has(idx)) return;
+          drawn.add(idx);
+          const bp = fkPos[idx];
+          if (!bp) return;
+          const sp = bodyToSvg(bp);
+
+          const c = document.createElementNS(SVG_NS, 'circle');
+          c.setAttribute('cx', sp.x); c.setAttribute('cy', sp.y);
+          c.setAttribute('r', idx === PELVIS_IDX || idx === MID_SHOULDER_IDX ? '3' : '4.5');
+          c.setAttribute('fill', 'var(--accent)');
+          c.setAttribute('stroke', 'var(--surface2)'); c.setAttribute('stroke-width', '1.5');
+          svg.appendChild(c);
+
+          if (JLABELS[idx]) {
+            const t = document.createElementNS(SVG_NS, 'text');
+            t.setAttribute('x', sp.x + 6); t.setAttribute('y', sp.y + 3);
+            t.setAttribute('font-size', '8'); t.setAttribute('font-family', 'var(--mono)');
+            t.setAttribute('fill', 'rgba(180,180,210,0.65)'); t.setAttribute('pointer-events', 'none');
+            t.textContent = JLABELS[idx];
+            svg.appendChild(t);
+          }
+        });
+      });
+
+      // Head circle above NOSE
+      if (fkPos[0]) {
+        const hp = bodyToSvg({x: fkPos[0].x, y: fkPos[0].y + 0.07, z: fkPos[0].z});
+        const hc = document.createElementNS(SVG_NS, 'circle');
+        hc.setAttribute('cx', hp.x); hc.setAttribute('cy', hp.y);
+        hc.setAttribute('r', '13');
+        hc.setAttribute('fill', 'none');
+        hc.setAttribute('stroke', '#7b879e'); hc.setAttribute('stroke-width', '2');
+        svg.appendChild(hc);
+      }
+    }
+
+    // ── 3D canvas renderer ───────────────────────────────────
+    function draw3D(fkPos) {
+      const canvas = document.getElementById('rl-canvas3d');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+
+      // Resize to CSS size
+      const rect = canvas.parentElement.getBoundingClientRect();
+      const dpr  = window.devicePixelRatio || 1;
+      const W    = Math.max(rect.width,  200);
+      const H    = Math.max(rect.height, 200);
+      if (canvas.width  !== Math.round(W * dpr) ||
+          canvas.height !== Math.round(H * dpr)) {
+        canvas.width  = Math.round(W * dpr);
+        canvas.height = Math.round(H * dpr);
+        ctx.scale(dpr, dpr);
+      }
+      ctx.clearRect(0, 0, W, H);
+
+      function project3d(bp) {
+        // Yaw orbit around Y
+        const ct = Math.cos(rlCamTheta), st = Math.sin(rlCamTheta);
+        const rx  =  bp.x * ct + bp.z * st;
+        const rz  = -bp.x * st + bp.z * ct;
+        // Pitch orbit around X
+        const cp  = Math.cos(rlCamPhi), sp = Math.sin(rlCamPhi);
+        const ry  =  bp.y * cp - rz * sp;
+        const rz2 =  bp.y * sp + rz * cp;
+        // Perspective projection (figure centre shifted up 10%)
+        const scale = (W * 0.42 * 1.6) / (rlCamDist + rz2 + 0.001);
+        return {
+          sx: W / 2 + rx * scale,
+          sy: H * 0.42 - ry * scale,
+          sz: rz2,
+        };
+      }
+
+      // Grid / floor
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+      ctx.lineWidth   = 1;
+      const GS = 0.15;
+      for (let i = -4; i <= 4; i++) {
+        const ga = project3d({x: i*GS, y:-0.38, z:-0.6});
+        const gb = project3d({x: i*GS, y:-0.38, z: 0.6});
+        const gc = project3d({x:-0.6,  y:-0.38, z: i*GS});
+        const gd = project3d({x: 0.6,  y:-0.38, z: i*GS});
+        ctx.beginPath(); ctx.moveTo(ga.sx,ga.sy); ctx.lineTo(gb.sx,gb.sy); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(gc.sx,gc.sy); ctx.lineTo(gd.sx,gd.sy); ctx.stroke();
+      }
+      ctx.restore();
+
+      // Project all positions
+      const projMap = {};
+      Object.entries(fkPos).forEach(([idx, bp]) => {
+        projMap[+idx] = project3d(bp);
+      });
+
+      // Sort bones back-to-front
+      const sortedBones = FK_BONES
+        .filter(b => projMap[b.parent] && projMap[b.child])
+        .map(b => ({b, avgZ: (projMap[b.parent].sz + projMap[b.child].sz) / 2}))
+        .sort((a, x) => x.avgZ - a.avgZ);
+
+      // Shoulder + hip crossbars (depth-sorted with bones)
+      const crossbars = [];
+      if (projMap[11] && projMap[12]) crossbars.push({pa: projMap[11], pb: projMap[12], color:'#fbbf24', w:1.5, a:0.35});
+      if (projMap[23] && projMap[24]) crossbars.push({pa: projMap[23], pb: projMap[24], color:'#fbbf24', w:1.5, a:0.35});
+
+      // Draw bones
+      sortedBones.forEach(({b}) => {
+        const pa = projMap[b.parent], pc = projMap[b.child];
+        const isSel = b.id === selectedBoneId;
+
+        ctx.beginPath();
+        ctx.moveTo(pa.sx, pa.sy); ctx.lineTo(pc.sx, pc.sy);
+        ctx.strokeStyle = isSel ? '#fbbf24' : boneColorForId(b.id);
+        ctx.lineWidth   = isSel ? 4.5 : 2.5;
+        ctx.globalAlpha = isSel ? 1 : 0.82;
+        ctx.lineCap     = 'round';
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      });
+
+      // Crossbars
+      crossbars.forEach(({pa, pb, color, w, a}) => {
+        ctx.beginPath(); ctx.moveTo(pa.sx,pa.sy); ctx.lineTo(pb.sx,pb.sy);
+        ctx.strokeStyle = color; ctx.lineWidth = w; ctx.globalAlpha = a; ctx.stroke();
+        ctx.globalAlpha = 1;
+      });
+
+      // Joint dots (back-to-front)
+      const jointIdxs = [...new Set(FK_BONES.flatMap(b => [b.parent, b.child]))];
+      jointIdxs.sort((a, b) => (projMap[b] ? projMap[b].sz : -99) - (projMap[a] ? projMap[a].sz : -99));
+
+      const JOINT_LABELS = {
+        0:'HEAD', 11:'L.SHOULDER', 12:'R.SHOULDER',
+        13:'L.ELBOW', 14:'R.ELBOW', 15:'L.WRIST', 16:'R.WRIST',
+        23:'L.HIP', 24:'R.HIP', 25:'L.KNEE', 26:'R.KNEE',
+        27:'L.ANKLE', 28:'R.ANKLE',
+        100:'PELVIS', 101:'CHEST',
+      };
+
+      jointIdxs.forEach(idx => {
+        const proj = projMap[idx];
+        if (!proj) return;
+        const r = 5;
+        ctx.beginPath(); ctx.arc(proj.sx, proj.sy, r, 0, 2*Math.PI);
+        ctx.fillStyle   = 'rgba(91,156,246,0.88)';
+        ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.lineWidth = 1;
+        ctx.fill(); ctx.stroke();
+
+        if (JOINT_LABELS[idx]) {
+          ctx.fillStyle = 'rgba(180,190,220,0.7)';
+          ctx.font      = '9px system-ui';
+          ctx.fillText(JOINT_LABELS[idx], proj.sx + r + 2, proj.sy + 3);
+        }
+      });
+
+      // Head sphere above NOSE
+      if (fkPos[0]) {
+        const hbp = {x: fkPos[0].x, y: fkPos[0].y + 0.07, z: fkPos[0].z};
+        const hp  = project3d(hbp);
+        ctx.beginPath(); ctx.arc(hp.sx, hp.sy, 14, 0, 2*Math.PI);
+        ctx.strokeStyle = '#7b879e'; ctx.lineWidth = 2; ctx.globalAlpha = 0.75;
+        ctx.stroke(); ctx.globalAlpha = 1;
+      }
+
+      // ── Sword (right hand) ─────────────────────────────────
+      const rElbow = fkPos[14], rWrist = fkPos[16];
+      if (rElbow && rWrist) {
+        // Twist angle: live mode uses wristTwist.deg; FK mode uses r_farm.roll
+        const twistDeg = cameraActive ? wristTwist.deg
+                                      : (boneRots['r_farm'] ? boneRots['r_farm'].roll : 0);
+
+        // Forearm unit vector (elbow → wrist)
+        const armRaw = {
+          x: rWrist.x - rElbow.x,
+          y: rWrist.y - rElbow.y,
+          z: rWrist.z - rElbow.z,
+        };
+        const arm = M.vec3normalize(armRaw);
+
+        // Choose an initial perpendicular (world-up unless arm is nearly vertical)
+        const ref  = Math.abs(arm.y) < 0.9 ? {x:0,y:1,z:0} : {x:1,y:0,z:0};
+        const refD = ref.x*arm.x + ref.y*arm.y + ref.z*arm.z;
+        const perp0 = M.vec3normalize({x:ref.x-refD*arm.x, y:ref.y-refD*arm.y, z:ref.z-refD*arm.z});
+        // Second tangent
+        const tang0 = {
+          x: arm.y*perp0.z - arm.z*perp0.y,
+          y: arm.z*perp0.x - arm.x*perp0.z,
+          z: arm.x*perp0.y - arm.y*perp0.x,
+        };
+        // Rotate perp0 by twistDeg around arm → guard direction
+        const T  = twistDeg * Math.PI / 180;
+        const ct = Math.cos(T), st = Math.sin(T);
+        const gd = {
+          x: perp0.x*ct + tang0.x*st,
+          y: perp0.y*ct + tang0.y*st,
+          z: perp0.z*ct + tang0.z*st,
+        };
+
+        // Key positions (body-space)
+        const BLADE_LEN  = 0.48;
+        const GUARD_HALF = 0.10;
+        const HANDLE_LEN = 0.10;
+        const tip   = { x:rWrist.x+arm.x*BLADE_LEN,  y:rWrist.y+arm.y*BLADE_LEN,  z:rWrist.z+arm.z*BLADE_LEN  };
+        const midBl = { x:rWrist.x+arm.x*BLADE_LEN*0.5, y:rWrist.y+arm.y*BLADE_LEN*0.5, z:rWrist.z+arm.z*BLADE_LEN*0.5 };
+        const grip  = { x:rWrist.x-arm.x*HANDLE_LEN, y:rWrist.y-arm.y*HANDLE_LEN, z:rWrist.z-arm.z*HANDLE_LEN };
+        const g1    = { x:rWrist.x+gd.x*GUARD_HALF,  y:rWrist.y+gd.y*GUARD_HALF,  z:rWrist.z+gd.z*GUARD_HALF  };
+        const g2    = { x:rWrist.x-gd.x*GUARD_HALF,  y:rWrist.y-gd.y*GUARD_HALF,  z:rWrist.z-gd.z*GUARD_HALF  };
+
+        // Project to screen
+        const pTip   = project3d(tip);
+        const pMid   = project3d(midBl);
+        const pWrist = project3d(rWrist);
+        const pGrip  = project3d(grip);
+        const pG1    = project3d(g1);
+        const pG2    = project3d(g2);
+
+        // Handle (brown)
+        ctx.beginPath();
+        ctx.moveTo(pGrip.sx, pGrip.sy);
+        ctx.lineTo(pWrist.sx, pWrist.sy);
+        ctx.strokeStyle = '#a0633a'; ctx.lineWidth = 4; ctx.lineCap = 'round';
+        ctx.stroke();
+
+        // Blade — tapered from base (thick) to tip (thin), two-tone
+        ctx.lineCap = 'round';
+        // Fuller (central ridge) bright silver
+        ctx.beginPath();
+        ctx.moveTo(pWrist.sx, pWrist.sy);
+        ctx.lineTo(pTip.sx, pTip.sy);
+        ctx.strokeStyle = 'rgba(200,220,255,0.95)'; ctx.lineWidth = 3;
+        ctx.stroke();
+        // Edge highlight
+        ctx.beginPath();
+        ctx.moveTo(pWrist.sx, pWrist.sy);
+        ctx.lineTo(pMid.sx, pMid.sy);
+        ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 5;
+        ctx.globalAlpha = 0.5; ctx.stroke(); ctx.globalAlpha = 1;
+
+        // Tip dot
+        ctx.beginPath(); ctx.arc(pTip.sx, pTip.sy, 2, 0, 2*Math.PI);
+        ctx.fillStyle = 'rgba(180,200,255,0.9)'; ctx.fill();
+
+        // Guard (gold crosspiece) — colour changes with reliability in live mode
+        const guardColor = cameraActive
+          ? (wristTwist.reliable ? '#f5c842' : 'rgba(245,200,66,0.4)')
+          : '#f5c842';
+        ctx.beginPath();
+        ctx.moveTo(pG1.sx, pG1.sy);
+        ctx.lineTo(pG2.sx, pG2.sy);
+        ctx.strokeStyle = guardColor; ctx.lineWidth = 3.5;
+        ctx.stroke();
+
+        // Pommel dot at grip
+        ctx.beginPath(); ctx.arc(pGrip.sx, pGrip.sy, 3.5, 0, 2*Math.PI);
+        ctx.fillStyle = '#f5c842'; ctx.fill();
+      }
+
+      // ── Wrist-twist debug HUD (top-right) ──────────────────
+      {
+        const hudX = W - 8, hudY = 14;
+        const lineH = 14;
+        ctx.font      = '11px system-ui,sans-serif';
+        ctx.textAlign = 'right';
+
+        // Mode badge
+        const modeTxt  = cameraActive ? 'LIVE — MediaPipe' : 'MANUAL — FK (r_farm.roll)';
+        const modeColor= cameraActive ? '#4ade80' : '#a78bfa';
+        ctx.fillStyle  = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(hudX - 170, hudY - 12, 174, lineH * 6 + 6, 4);
+        ctx.fillStyle = modeColor;
+        ctx.fillText('🗡 Sword / Wrist Twist', hudX, hudY);
+
+        ctx.fillStyle = 'rgba(180,190,220,0.85)';
+        ctx.fillText(modeTxt, hudX, hudY + lineH);
+
+        // Twist value
+        const twistDegHud = cameraActive ? wristTwist.deg : (boneRots['r_farm'] ? boneRots['r_farm'].roll : 0);
+        const twistColor  = cameraActive && !wristTwist.reliable ? 'rgba(245,200,66,0.4)' : '#fbbf24';
+        ctx.fillStyle = twistColor;
+        ctx.fillText(`Twist: ${twistDegHud}°`, hudX, hudY + lineH * 2);
+
+        if (cameraActive) {
+          // Reliability indicator
+          const relTxt   = wristTwist.reliable ? '✓ Reliable' : '✗ Low confidence';
+          ctx.fillStyle  = wristTwist.reliable ? '#4ade80' : '#f87171';
+          ctx.fillText(relTxt, hudX, hudY + lineH * 3);
+
+          // Per-landmark visibility bars
+          const VBARS = [
+            {label:'Elbow', v: wristTwist.elbow_vis},
+            {label:'Wrist', v: wristTwist.wrist_vis},
+            {label:'Pinky', v: wristTwist.pinky_vis},
+            {label:'Index', v: wristTwist.index_vis},
+          ];
+          VBARS.forEach(({label, v}, i) => {
+            const y = hudY + lineH * (4 + i);
+            const barW = 60, barX = hudX - barW;
+            // track
+            ctx.fillStyle = 'rgba(255,255,255,0.12)';
+            ctx.fillRect(barX, y - 9, barW, 8);
+            // fill
+            ctx.fillStyle = v >= 0.35 ? '#4ade80' : '#f87171';
+            ctx.fillRect(barX, y - 9, barW * Math.min(v, 1), 8);
+            // label
+            ctx.fillStyle = 'rgba(180,190,220,0.7)';
+            ctx.textAlign = 'right';
+            ctx.fillText(`${label} ${Math.round(v*100)}%`, barX - 2, y - 1);
+          });
+        }
+        ctx.textAlign = 'left'; // restore
+      }
+
+      // Axes indicator (bottom-left)
+      const AX = 32, AY = H - 32, AL = 22;
+      [
+        {v:{x:1,y:0,z:0}, color:'#f87171', label:'X'},
+        {v:{x:0,y:1,z:0}, color:'#4ade80', label:'Y'},
+        {v:{x:0,y:0,z:-1},color:'#5b9cf6', label:'Z'},
+      ].forEach(({v, color, label}) => {
+        const ct = Math.cos(rlCamTheta), st = Math.sin(rlCamTheta);
+        const cp = Math.cos(rlCamPhi),   sp = Math.sin(rlCamPhi);
+        const rx  = v.x*ct + v.z*st;
+        const rz  = -v.x*st + v.z*ct;
+        const ry  = v.y*cp - rz*sp;
+        const ex  = AX + rx*AL, ey = AY - ry*AL;
+        ctx.beginPath(); ctx.moveTo(AX,AY); ctx.lineTo(ex,ey);
+        ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.stroke();
+        ctx.fillStyle = color; ctx.font = 'bold 9px system-ui';
+        ctx.fillText(label, ex+2, ey+3);
+      });
+    }
+
+    // ── Master draw ──────────────────────────────────────────
+    // In live-camera mode onPoseResults drives the canvases directly;
+    // drawAll only acts when the camera is off (manual FK mode).
+    function drawAll() {
+      if (cameraActive) { updateUEReadout(); return; }
+      const fkPos = computeFK();
+      draw2D(fkPos);
+      draw3D(fkPos);
+      updateUEReadout();
+    }
+
+    // ── Camera helpers ───────────────────────────────────────
+
+    function setCamStatus(msg, durationMs) {
+      const el = document.getElementById('rl-cam-status');
+      if (!el) return;
+      el.textContent = msg;
+      el.style.display = msg ? 'block' : 'none';
+      if (durationMs) setTimeout(() => { el.style.display = 'none'; }, durationMs);
+    }
+
+    async function startCamera() {
+      const btn = document.getElementById('rl-cam-btn');
+      if (btn) { btn.textContent = '⏳ Loading…'; btn.disabled = true; }
+
+      // Lazily construct MediaPipe Pose on first use
+      if (!mpPose) {
+        if (!window.Pose) {
+          if (btn) { btn.textContent = '📷 Camera'; btn.disabled = false; }
+          setCamStatus('MediaPipe not loaded — internet connection required', 4000);
+          return;
+        }
+        mpPose = new window.Pose({
+          locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`,
+        });
+        mpPose.setOptions({
+          modelComplexity: 1,
+          smoothLandmarks: true,
+          enableSegmentation: false,
+          minDetectionConfidence: 0.5,
+          minTrackingConfidence: 0.5,
+        });
+        mpPose.onResults(onPoseResults);
+      }
+
+      // Create a persistent hidden video element
+      if (!mpVideoEl) {
+        mpVideoEl = document.createElement('video');
+        mpVideoEl.setAttribute('playsinline', '');
+        mpVideoEl.style.cssText = 'position:fixed;opacity:0;pointer-events:none;top:0;left:0;width:1px;height:1px';
+        document.body.appendChild(mpVideoEl);
+      }
+
+      try {
+        if (window.Camera) {
+          // Prefer the MediaPipe Camera helper (handles frame timing correctly)
+          mpCameraObj = new window.Camera(mpVideoEl, {
+            onFrame: async () => { if (mpPose && cameraActive) await mpPose.send({image: mpVideoEl}); },
+            width: 640, height: 480,
+          });
+          await mpCameraObj.start();
+        } else {
+          // Fallback: raw getUserMedia + rAF loop
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: {width: 640, height: 480, facingMode: 'user'},
+          });
+          mpVideoEl.srcObject = stream;
+          await mpVideoEl.play();
+          (function pollFrame() {
+            if (!cameraActive) return;
+            if (mpPose) mpPose.send({image: mpVideoEl}).catch(() => {});
+            requestAnimationFrame(pollFrame);
+          })();
+        }
+
+        cameraActive = true;
+        document.getElementById('rl-svg2d').style.display   = 'none';
+        document.getElementById('rl-webcam').style.display  = 'block';
+        document.getElementById('rl-view-label').textContent = 'Live Camera (MediaPipe)';
+        document.getElementById('rl-3d-hint').textContent   = 'Drag to orbit  ·  Scroll to zoom  ·  Live MediaPipe pose';
+        if (btn) { btn.textContent = '⏹ Stop Camera'; btn.disabled = false; btn.style.background = 'var(--accent)'; btn.style.color = '#000'; }
+        // Grey out manual sliders while live
+        ['rl-pitch','rl-yaw','rl-roll'].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.disabled = true;
+        });
+        setCamStatus('');
+
+      } catch (err) {
+        console.error('Camera start failed:', err);
+        if (btn) { btn.textContent = '📷 Camera'; btn.disabled = false; }
+        setCamStatus('Camera error: ' + err.message, 5000);
+      }
+    }
+
+    function stopCamera() {
+      cameraActive = false;
+      liveLm = liveWorldLm = null;
+
+      if (mpCameraObj) { try { mpCameraObj.stop(); } catch (_) {} mpCameraObj = null; }
+      if (mpVideoEl && mpVideoEl.srcObject) {
+        mpVideoEl.srcObject.getTracks().forEach(t => t.stop());
+        mpVideoEl.srcObject = null;
+      }
+
+      document.getElementById('rl-webcam').style.display  = 'none';
+      document.getElementById('rl-svg2d').style.display   = 'block';
+      document.getElementById('rl-view-label').textContent = 'Front View (2D)';
+      document.getElementById('rl-3d-hint').textContent   = 'Drag to orbit  ·  Select bone below';
+
+      const btn = document.getElementById('rl-cam-btn');
+      if (btn) { btn.textContent = '📷 Camera'; btn.style.background = ''; btn.style.color = ''; }
+
+      // Restore slider state
+      if (selectedBoneId) {
+        ['rl-pitch','rl-yaw','rl-roll'].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.disabled = false;
+        });
+      }
+      setCamStatus('');
+      drawAll();
+    }
+
+    // ── MediaPipe onResults callback ──────────────────────────
+    function onPoseResults(results) {
+      if (!cameraActive) return;
+      const canvas = document.getElementById('rl-webcam');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+
+      const W = 640, H = 480;
+      if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; }
+
+      ctx.clearRect(0, 0, W, H);
+
+      // Draw mirrored webcam frame
+      ctx.save();
+      ctx.translate(W, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(results.image, 0, 0, W, H);
+      ctx.restore();
+
+      if (results.poseLandmarks) {
+        liveLm       = results.poseLandmarks;
+        liveWorldLm  = results.poseWorldLandmarks;
+        drawMpOverlay(ctx, liveLm, W, H);
+
+        if (liveWorldLm) {
+          computeWristTwist(liveWorldLm);
+          draw3D(worldLmToBodyPos(liveWorldLm));
+        }
+      }
+    }
+
+    // ── Skeleton overlay on webcam canvas ────────────────────
+    function drawMpOverlay(ctx, lm, W, H) {
+      // x is mirrored to match the flipped video
+      const sx = p => (1 - p.x) * W;
+      const sy = p => p.y * H;
+      const vis = p => !p || (p.visibility !== undefined && p.visibility < 0.3);
+
+      // Bones
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      MP_POSE_CONN.forEach(([a, b]) => {
+        const pa = lm[a], pb = lm[b];
+        if (vis(pa) || vis(pb)) return;
+        // Colour upper body green, lower body cyan, face grey
+        const isUpper = a < 23 && b < 23;
+        const isLower = a >= 23 || b >= 23;
+        ctx.strokeStyle = isLower  ? 'rgba(0,210,255,0.85)' :
+                          a <= 10  ? 'rgba(200,200,200,0.6)' :
+                                     'rgba(0,240,120,0.9)';
+        ctx.lineWidth = (a >= 23 || isUpper) ? 3 : 1.5;
+        ctx.beginPath();
+        ctx.moveTo(sx(pa), sy(pa));
+        ctx.lineTo(sx(pb), sy(pb));
+        ctx.stroke();
+      });
+
+      // Joint dots
+      const KEY = new Set([11,12,13,14,15,16,23,24,25,26,27,28]);
+      lm.forEach((p, i) => {
+        if (vis(p)) return;
+        const r = KEY.has(i) ? 5 : 2.5;
+        ctx.beginPath();
+        ctx.arc(sx(p), sy(p), r, 0, 2 * Math.PI);
+        ctx.fillStyle = 'rgba(255,70,70,0.92)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      });
+
+      // Labels for key joints
+      const LABELS = {
+        11:'L.Sh', 12:'R.Sh', 13:'L.El', 14:'R.El',
+        15:'L.Wr', 16:'R.Wr', 23:'L.Hip',24:'R.Hip',
+        25:'L.Kn', 26:'R.Kn', 27:'L.An', 28:'R.An',
+      };
+      ctx.font = '9px system-ui,sans-serif';
+      Object.entries(LABELS).forEach(([i, name]) => {
+        const p = lm[+i];
+        if (vis(p)) return;
+        ctx.fillStyle = 'rgba(255,255,100,0.9)';
+        ctx.fillText(name, sx(p) + 6, sy(p) + 3);
+      });
+
+      // Extra: highlight right wrist + finger landmarks used for twist
+      // lm[16]=R.Wrist, lm[18]=R.Pinky, lm[20]=R.Index
+      [[16,'R.Wr'],[18,'R.Pk'],[20,'R.Ix']].forEach(([i, label]) => {
+        const p = lm[i];
+        if (!p || p.visibility < 0.2) return;
+        const reliableColor = (i === 16 && wristTwist.wrist_vis >= 0.35) ||
+                              (i === 18 && wristTwist.pinky_vis >= 0.35) ||
+                              (i === 20 && wristTwist.index_vis >= 0.35);
+        // Ring glow
+        ctx.beginPath();
+        ctx.arc(sx(p), sy(p), 9, 0, 2*Math.PI);
+        ctx.strokeStyle = reliableColor ? 'rgba(245,200,66,0.8)' : 'rgba(248,113,113,0.6)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        // Label with twist angle for wrist
+        if (i === 16 && wristTwist.reliable) {
+          ctx.fillStyle = '#fbbf24';
+          ctx.font = 'bold 10px system-ui,sans-serif';
+          ctx.fillText(`Twist ${wristTwist.deg}°`, sx(p) + 10, sy(p) - 5);
+          ctx.font = '9px system-ui,sans-serif';
+        }
+      });
+    }
+
+    // ── Convert MediaPipe world landmarks → body-space ────────
+    // MP world: origin = mid-hip, x=right, y=DOWN, z=depth-toward-camera
+    // Body space: origin = mid-hip, x=right, y=UP, z=FORWARD (toward camera)
+    function worldLmToBodyPos(worldLm) {
+      const pos = {};
+      pos[PELVIS_IDX] = {x: 0, y: 0, z: 0};
+
+      if (worldLm[11] && worldLm[12]) {
+        pos[MID_SHOULDER_IDX] = {
+          x:  (worldLm[11].x + worldLm[12].x) * 0.5,
+          y: -((worldLm[11].y + worldLm[12].y) * 0.5),
+          z: -((worldLm[11].z + worldLm[12].z) * 0.5),
+        };
+      }
+
+      [0, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28].forEach(i => {
+        const p = worldLm[i];
+        if (!p) return;
+        pos[i] = {x: p.x, y: -p.y, z: -p.z};
+      });
+
+      return pos;
+    }
+
+    // ── Bone list UI ─────────────────────────────────────────
+    const boneListEl = document.getElementById('rl-bone-list');
+    if (boneListEl) {
+      FK_BONES.forEach(bone => {
+        const item = document.createElement('div');
+        item.className = 'bone-item';
+        item.dataset.id = bone.id;
+        item.textContent = bone.name;
+        item.addEventListener('click', () => selectBone(bone.id));
+        boneListEl.appendChild(item);
+      });
+    }
+
+    function selectBone(id) {
+      selectedBoneId = id;
+      document.querySelectorAll('.bone-item').forEach(el =>
+        el.classList.toggle('sel', el.dataset.id === id));
+
+      const rot = boneRots[id] || {pitch:0, yaw:0, roll:0};
+      ['pitch','yaw','roll'].forEach(ax => {
+        const sl = document.getElementById(`rl-${ax}`);
+        const vl = document.getElementById(`rl-${ax}-v`);
+        if (sl) { sl.value = rot[ax]; sl.disabled = false; }
+        if (vl)   vl.textContent = rot[ax] + '°';
+      });
+
+      const bone = FK_BONES.find(b => b.id === id);
+      const boneNameEl = document.getElementById('rl-bone-name');
+      const ueNameEl   = document.getElementById('rl-ue-bonename');
+      if (boneNameEl) boneNameEl.textContent = bone ? bone.name : id;
+      if (ueNameEl)   ueNameEl.textContent   = bone ? `"${bone.id}"` : `"${id}"`;
+
+      updateUEReadout();
+      drawAll();
+    }
+
+    // ── Sliders ──────────────────────────────────────────────
+    ['pitch','yaw','roll'].forEach(ax => {
+      const el = document.getElementById(`rl-${ax}`);
+      if (!el) return;
+      el.addEventListener('input', () => {
+        if (!selectedBoneId) return;
+        const val = parseInt(el.value, 10);
+        boneRots[selectedBoneId][ax] = val;
+        document.getElementById(`rl-${ax}-v`).textContent = val + '°';
+        drawAll();
+      });
+    });
+
+    // ── UE formula readout ───────────────────────────────────
+    function updateUEReadout() {
+      if (!selectedBoneId) return;
+      const rot = boneRots[selectedBoneId];
+      const pEl = document.getElementById('rl-ro-pitch');
+      const yEl = document.getElementById('rl-ro-yaw');
+      const rEl = document.getElementById('rl-ro-roll');
+      if (pEl) pEl.textContent = rot.pitch + '°';
+      if (yEl) yEl.textContent = rot.yaw   + '°';
+      if (rEl) rEl.textContent = rot.roll  + '°';
+      const ueRot = document.getElementById('rl-ue-rot');
+      if (ueRot) ueRot.textContent = `(pitch=${rot.pitch}, yaw=${rot.yaw}, roll=${rot.roll})`;
+    }
+
+    // ── Preset buttons ───────────────────────────────────────
+    function applyPreset(presetName) {
+      const preset = PRESETS[presetName] || {};
+      FK_BONES.forEach(b => {
+        boneRots[b.id] = preset[b.id] ? {...preset[b.id]} : {pitch:0, yaw:0, roll:0};
+      });
+      if (selectedBoneId) {
+        const rot = boneRots[selectedBoneId];
+        ['pitch','yaw','roll'].forEach(ax => {
+          const sl = document.getElementById(`rl-${ax}`);
+          const vl = document.getElementById(`rl-${ax}-v`);
+          if (sl) sl.value = rot[ax];
+          if (vl) vl.textContent = rot[ax] + '°';
+        });
+      }
+      drawAll();
+    }
+
+    ['tpose','attack','guard','crouch'].forEach(name => {
+      const btn = document.getElementById(`rl-preset-${name}`);
+      if (btn) btn.addEventListener('click', () => applyPreset(name));
+    });
+
+    // ── Camera toggle button ──────────────────────────────────
+    const camBtn = document.getElementById('rl-cam-btn');
+    if (camBtn) {
+      camBtn.addEventListener('click', () => {
+        if (cameraActive) stopCamera(); else startCamera();
+      });
+    }
+
+    // ── 3D orbit drag ────────────────────────────────────────
+    const canvas3d = document.getElementById('rl-canvas3d');
+    if (canvas3d) {
+      canvas3d.addEventListener('pointerdown', e => {
+        rlDragging = true;
+        rlLastMouse = {x: e.clientX, y: e.clientY};
+        canvas3d.setPointerCapture(e.pointerId);
+      });
+      canvas3d.addEventListener('pointermove', e => {
+        if (!rlDragging) return;
+        const dx = e.clientX - rlLastMouse.x;
+        const dy = e.clientY - rlLastMouse.y;
+        rlCamTheta += dx * 0.008;
+        rlCamPhi   += dy * 0.008;
+        rlCamPhi    = M.clamp(rlCamPhi, -1.4, 1.4);
+        rlLastMouse = {x: e.clientX, y: e.clientY};
+        // In live mode redraw the 3D view with the most-recent live data
+        if (cameraActive && liveWorldLm) draw3D(worldLmToBodyPos(liveWorldLm));
+        else drawAll();
+      });
+      canvas3d.addEventListener('pointerup',    () => { rlDragging = false; });
+      canvas3d.addEventListener('pointercancel',() => { rlDragging = false; });
+
+      // Scroll-wheel zoom: smaller rlCamDist = zoomed in
+      canvas3d.addEventListener('wheel', e => {
+        e.preventDefault();
+        rlCamDist += e.deltaY * 0.002;
+        rlCamDist  = M.clamp(rlCamDist, 0.4, 8.0);
+        if (cameraActive && liveWorldLm) draw3D(worldLmToBodyPos(liveWorldLm));
+        else drawAll();
+      }, {passive: false});
+    }
+
+    // ── Lazy init when tab is shown ───────────────────────────
+    let rlInited = false;
+    function initRL() {
+      if (rlInited) return;
+      rlInited = true;
+      initTpose();
+      selectBone('spine'); // pre-select spine so sliders are active immediately
+      drawAll();
+    }
+
+    document.addEventListener('tabchange', e => {
+      if (e.detail === 'rotlab') setTimeout(initRL, 30);
+    });
+    window.addEventListener('resize', () => {
+      if (!rlInited) return;
+      if (cameraActive && liveWorldLm) draw3D(worldLmToBodyPos(liveWorldLm));
+      else drawAll();
+    });
 
   })();
 

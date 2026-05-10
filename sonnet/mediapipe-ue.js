@@ -281,6 +281,52 @@
     return { pitch, yaw, roll: 0 };
   }
 
+  // ── Euler rotation ────────────────────────────────────────────
+
+  /**
+   * Rotate a 3-D vector by intrinsic ZXY Euler angles (Roll → Pitch → Yaw).
+   *
+   * Applied in order:
+   *   1. Roll  — Rz(rollDeg)   — spin around Z-axis
+   *   2. Pitch — Rx(pitchDeg)  — nod around X-axis
+   *   3. Yaw   — Ry(yawDeg)    — turn around Y-axis
+   *
+   * Equivalent to the matrix product: Ry(yaw) · Rx(pitch) · Rz(roll) · v
+   *
+   * Use this for Absolute Rotation FK: given a bone's T-pose direction,
+   * call rotateVec3ByEuler(tposeDir, pitch, yaw, roll) to get the new
+   * bone direction for any desired rotation, independent of previous state.
+   *
+   * @param {{ x,y,z }} v        direction vector (need not be unit length)
+   * @param {number}    pitchDeg rotation around X-axis (degrees)
+   * @param {number}    yawDeg   rotation around Y-axis (degrees)
+   * @param {number}    rollDeg  rotation around Z-axis (degrees)
+   * @returns {{ x,y,z }}
+   */
+  function rotateVec3ByEuler(v, pitchDeg, yawDeg, rollDeg) {
+    const D2R = Math.PI / 180;
+    const cp = Math.cos(pitchDeg * D2R), sp = Math.sin(pitchDeg * D2R);
+    const cy = Math.cos(yawDeg  * D2R), sy = Math.sin(yawDeg  * D2R);
+    const cr = Math.cos(rollDeg * D2R), sr = Math.sin(rollDeg * D2R);
+
+    // Step 1: Roll — Rz(roll)
+    const x1 = cr * v.x - sr * v.y;
+    const y1 = sr * v.x + cr * v.y;
+    const z1 = v.z;
+
+    // Step 2: Pitch — Rx(pitch)
+    const x2 = x1;
+    const y2 = cp * y1 - sp * z1;
+    const z2 = sp * y1 + cp * z1;
+
+    // Step 3: Yaw — Ry(yaw)
+    const x3 =  cy * x2 + sy * z2;
+    const y3 = y2;
+    const z3 = -sy * x2 + cy * z2;
+
+    return { x: x3, y: y3, z: z3 };
+  }
+
   // ── Public API ────────────────────────────────────────────────
 
   const api = {
@@ -305,6 +351,7 @@
     ema3,
     // bone rotation
     directionToRotator,
+    rotateVec3ByEuler,
     // gesture detectors
     detectAttack,
     detectGuard,
