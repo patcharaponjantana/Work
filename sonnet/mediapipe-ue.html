@@ -9,6 +9,7 @@
 <script async src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
 <script async src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
 <script async src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+<script async src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -2196,6 +2197,25 @@ Roll  = 0°  <span class="fc">// not derivable from direction alone</span>`;
     let liveLm         = null;   // latest 2-D normalised landmarks (33 items)
     let liveWorldLm    = null;   // latest 3-D world landmarks (metres, origin mid-hip)
 
+    // ── Weapon direction state (set by hand-grip detection) ───
+    let weaponDir3D    = null;   // {x,y,z} normalised weapon direction in body space
+
+    // ── MediaPipe Hands state ──────────────────────────────────
+    let mpHands         = null;   // Hands model instance
+    let liveHandLm      = null;   // 21 × {x,y,z} image-normalised landmarks
+    let liveHandWorldLm = null;   // 21 × {x,y,z} world-space landmarks (metres, hand-centred)
+    let handIsGripping  = false;
+
+    // Hand skeleton connections (21 landmarks)
+    const HAND_CONN = [
+      [0,1],[1,2],[2,3],[3,4],           // thumb
+      [0,5],[5,6],[6,7],[7,8],           // index
+      [0,9],[9,10],[10,11],[11,12],      // middle
+      [0,13],[13,14],[14,15],[15,16],    // ring
+      [0,17],[17,18],[18,19],[19,20],    // pinky
+      [5,9],[9,13],[13,17],              // palm knuckle bar
+    ];
+
     // ── Wrist-twist debug state ────────────────────────────────
     // Computed each frame from world landmarks 14/16/18/20
     let wristTwist = {
@@ -2598,13 +2618,15 @@ Roll  = 0°  <span class="fc">// not derivable from direction alone</span>`;
         const twistDeg = cameraActive ? wristTwist.deg
                                       : (boneRots['r_farm'] ? boneRots['r_farm'].roll : 0);
 
-        // Forearm unit vector (elbow → wrist)
+        // Forearm unit vector (elbow → wrist) — overridden by visual weapon detection
         const armRaw = {
           x: rWrist.x - rElbow.x,
           y: rWrist.y - rElbow.y,
           z: rWrist.z - rElbow.z,
         };
-        const arm = M.vec3normalize(armRaw);
+        // If we have a visually-detected weapon direction, use it instead of the
+        // forearm axis so the 3-D sword matches the actual held weapon.
+        const arm = (cameraActive && weaponDir3D) ? weaponDir3D : M.vec3normalize(armRaw);
 
         // Choose an initial perpendicular (world-up unless arm is nearly vertical)
         const ref  = Math.abs(arm.y) < 0.9 ? {x:0,y:1,z:0} : {x:1,y:0,z:0};
@@ -2694,8 +2716,9 @@ Roll  = 0°  <span class="fc">// not derivable from direction alone</span>`;
         // Mode badge
         const modeTxt  = cameraActive ? 'LIVE — MediaPipe' : 'MANUAL — FK (r_farm.roll)';
         const modeColor= cameraActive ? '#4ade80' : '#a78bfa';
-        ctx.fillStyle  = 'rgba(0,0,0,0.5)';
-        ctx.fillRect(hudX - 170, hudY - 12, 174, lineH * 6 + 6, 4);
+        ctx.fillStyle  = 'rgba(0,0,0,0.55)';
+        const hudLines = cameraActive ? 9 : 2;
+        ctx.fillRect(hudX - 174, hudY - 13, 178, lineH * hudLines + 8);
         ctx.fillStyle = modeColor;
         ctx.fillText('🗡 Sword / Wrist Twist', hudX, hudY);
 
@@ -2724,17 +2747,28 @@ Roll  = 0°  <span class="fc">// not derivable from direction alone</span>`;
           VBARS.forEach(({label, v}, i) => {
             const y = hudY + lineH * (4 + i);
             const barW = 60, barX = hudX - barW;
-            // track
             ctx.fillStyle = 'rgba(255,255,255,0.12)';
             ctx.fillRect(barX, y - 9, barW, 8);
-            // fill
             ctx.fillStyle = v >= 0.35 ? '#4ade80' : '#f87171';
             ctx.fillRect(barX, y - 9, barW * Math.min(v, 1), 8);
-            // label
             ctx.fillStyle = 'rgba(180,190,220,0.7)';
             ctx.textAlign = 'right';
             ctx.fillText(`${label} ${Math.round(v*100)}%`, barX - 2, y - 1);
           });
+
+          // Grip / weapon row (from MediaPipe Hands)
+          const gripRow = hudY + lineH * 8;
+          ctx.textAlign = 'right';
+          if (!liveHandLm) {
+            ctx.fillStyle = 'rgba(180,190,220,0.4)';
+            ctx.fillText('⚔ Grip: no hand detected', hudX, gripRow);
+          } else if (handIsGripping) {
+            ctx.fillStyle = '#fbbf24';
+            ctx.fillText('⚔ Grip: HOLDING — sword active', hudX, gripRow);
+          } else {
+            ctx.fillStyle = 'rgba(180,100,255,0.7)';
+            ctx.fillText('⚔ Grip: open hand', hudX, gripRow);
+          }
         }
         ctx.textAlign = 'left'; // restore
       }
@@ -2768,6 +2802,151 @@ Roll  = 0°  <span class="fc">// not derivable from direction alone</span>`;
       draw2D(fkPos);
       draw3D(fkPos);
       updateUEReadout();
+    }
+
+    // ── Hand-grip weapon tracking ─────────────────────────────
+
+    /**
+     * MediaPipe Hands onResults callback.
+     * Picks the hand whose wrist (lm[0]) is closest to the pose right-wrist (lm[16])
+     * in image space — avoids depending on the unreliable handedness label.
+     */
+    function onHandResults(results) {
+      if (!cameraActive) return;
+      const hands2d = results.multiHandLandmarks;
+      const handsWd = results.multiHandWorldLandmarks;
+
+      if (!hands2d || hands2d.length === 0) {
+        liveHandLm = liveHandWorldLm = null;
+        handIsGripping = false;
+        weaponDir3D    = null;
+        return;
+      }
+
+      // Pick the hand closest to the pose right-wrist (liveLm[16])
+      let bestIdx = 0;
+      if (hands2d.length > 1 && liveLm && liveLm[16]) {
+        const rw = liveLm[16];
+        let bestDist = Infinity;
+        hands2d.forEach((hLm, i) => {
+          const d = Math.hypot(hLm[0].x - rw.x, hLm[0].y - rw.y);
+          if (d < bestDist) { bestDist = d; bestIdx = i; }
+        });
+      }
+
+      liveHandLm      = hands2d[bestIdx];
+      liveHandWorldLm = handsWd  ? handsWd[bestIdx] : null;
+
+      computeGripAndWeapon();
+
+      // Draw hand overlay on webcam canvas
+      const canvas = document.getElementById('rl-webcam');
+      if (canvas) {
+        const ctx = canvas.getContext('2d');
+        drawHandOverlay(ctx, liveHandLm, canvas.width || 640, canvas.height || 480);
+      }
+    }
+
+    /**
+     * From the 21 hand image-normalised landmarks:
+     *  1. Detect grip: count fingers whose tip is closer to wrist than MCP.
+     *  2. When gripping, set weaponDir3D = wrist→middleMCP direction in body space.
+     *     Uses shoulder width as a pixel→world scale reference (same method as pose).
+     */
+    function computeGripAndWeapon() {
+      if (!liveHandLm) { handIsGripping = false; weaponDir3D = null; return; }
+
+      // Grip detection: index / middle / ring / pinky
+      const MCPS = [5, 9, 13, 17];
+      const TIPS = [8, 12, 16, 20];
+      let curled = 0;
+      for (let i = 0; i < 4; i++) {
+        const tip = liveHandLm[TIPS[i]], mcp = liveHandLm[MCPS[i]], wr = liveHandLm[0];
+        const tipD = Math.hypot(tip.x - wr.x, tip.y - wr.y);
+        const mcpD = Math.hypot(mcp.x - wr.x, mcp.y - wr.y);
+        if (tipD < mcpD * 1.25) curled++;
+      }
+      handIsGripping = (curled >= 3);
+
+      if (!handIsGripping) { weaponDir3D = null; return; }
+
+      // Grip axis in image space: wrist(0) → middle MCP(9)
+      const dx2d = liveHandLm[9].x - liveHandLm[0].x;
+      const dy2d = liveHandLm[9].y - liveHandLm[0].y;
+
+      // Pixel-to-world scale from pose shoulder width
+      let scale = 1;
+      if (liveLm && liveWorldLm && liveLm[11] && liveLm[12] && liveWorldLm[11] && liveWorldLm[12]) {
+        const pxW  = Math.hypot(liveLm[11].x - liveLm[12].x, liveLm[11].y - liveLm[12].y);
+        const wdW  = Math.hypot(
+          liveWorldLm[11].x - liveWorldLm[12].x,
+          liveWorldLm[11].y - liveWorldLm[12].y,
+          liveWorldLm[11].z - liveWorldLm[12].z,
+        );
+        if (pxW > 0.01) scale = wdW / pxW;
+      }
+
+      // Convert to body space: y flipped (MP y-down → body y-up), z≈0 (frontal plane)
+      const dir = M.vec3normalize({ x: dx2d * scale, y: -dy2d * scale, z: 0 });
+      weaponDir3D = isNaN(dir.x) ? null : dir;
+    }
+
+    /**
+     * Draw the 21-landmark hand skeleton on the webcam canvas in violet,
+     * with a GRIPPING / OPEN label and highlighted grip-axis joints.
+     */
+    function drawHandOverlay(ctx, lm, W, H) {
+      if (!lm) return;
+      // x is mirrored to match the flipped video (same convention as drawMpOverlay)
+      const sx = p => (1 - p.x) * W;
+      const sy = p => p.y * H;
+
+      // Connections
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      HAND_CONN.forEach(([a, b]) => {
+        ctx.beginPath();
+        ctx.moveTo(sx(lm[a]), sy(lm[a]));
+        ctx.lineTo(sx(lm[b]), sy(lm[b]));
+        ctx.strokeStyle = 'rgba(180,100,255,0.85)';
+        ctx.lineWidth   = 2;
+        ctx.stroke();
+      });
+
+      // Joints
+      lm.forEach((p, i) => {
+        const isKey = (i === 0 || i === 9);  // wrist + middle MCP
+        ctx.beginPath();
+        ctx.arc(sx(p), sy(p), isKey ? 6 : 3, 0, 2 * Math.PI);
+        ctx.fillStyle   = isKey ? 'rgba(255,180,50,0.95)' : 'rgba(180,100,255,0.85)';
+        ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.lineWidth = 1;
+        ctx.fill(); ctx.stroke();
+      });
+
+      // Grip-axis line: wrist → middle MCP, extended to show weapon direction
+      if (handIsGripping) {
+        const wx = sx(lm[0]), wy = sy(lm[0]);
+        const mx = sx(lm[9]), my = sy(lm[9]);
+        const dx = mx - wx, dy = my - wy;
+        const extX = wx + dx * 3.5, extY = wy + dy * 3.5;  // extend 3.5× past MCP
+
+        ctx.save();
+        ctx.shadowColor = '#fbbf24'; ctx.shadowBlur = 6;
+        ctx.beginPath();
+        ctx.moveTo(wx, wy);
+        ctx.lineTo(extX, extY);
+        ctx.strokeStyle = 'rgba(251,191,36,0.85)'; ctx.lineWidth = 2;
+        ctx.setLineDash([6, 4]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.shadowBlur = 0;
+        ctx.restore();
+      }
+
+      // Label near wrist
+      const labelX = sx(lm[0]) + 8, labelY = sy(lm[0]) - 10;
+      ctx.font      = 'bold 10px system-ui,sans-serif';
+      ctx.fillStyle = handIsGripping ? '#fbbf24' : 'rgba(180,100,255,0.8)';
+      ctx.fillText(handIsGripping ? 'GRIPPING' : 'OPEN', labelX, labelY);
     }
 
     // ── Camera helpers ───────────────────────────────────────
@@ -2804,6 +2983,20 @@ Roll  = 0°  <span class="fc">// not derivable from direction alone</span>`;
         mpPose.onResults(onPoseResults);
       }
 
+      // Lazily construct MediaPipe Hands on first use
+      if (!mpHands && window.Hands) {
+        mpHands = new window.Hands({
+          locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`,
+        });
+        mpHands.setOptions({
+          maxNumHands:            2,
+          modelComplexity:        1,
+          minDetectionConfidence: 0.6,
+          minTrackingConfidence:  0.5,
+        });
+        mpHands.onResults(onHandResults);
+      }
+
       // Create a persistent hidden video element
       if (!mpVideoEl) {
         mpVideoEl = document.createElement('video');
@@ -2816,7 +3009,11 @@ Roll  = 0°  <span class="fc">// not derivable from direction alone</span>`;
         if (window.Camera) {
           // Prefer the MediaPipe Camera helper (handles frame timing correctly)
           mpCameraObj = new window.Camera(mpVideoEl, {
-            onFrame: async () => { if (mpPose && cameraActive) await mpPose.send({image: mpVideoEl}); },
+            onFrame: async () => {
+              if (!cameraActive) return;
+              if (mpPose)  await mpPose.send({image: mpVideoEl});
+              if (mpHands) await mpHands.send({image: mpVideoEl});
+            },
             width: 640, height: 480,
           });
           await mpCameraObj.start();
@@ -2829,7 +3026,9 @@ Roll  = 0°  <span class="fc">// not derivable from direction alone</span>`;
           await mpVideoEl.play();
           (function pollFrame() {
             if (!cameraActive) return;
-            if (mpPose) mpPose.send({image: mpVideoEl}).catch(() => {});
+            const frame = {image: mpVideoEl};
+            if (mpPose)  mpPose.send(frame).catch(() => {});
+            if (mpHands) mpHands.send(frame).catch(() => {});
             requestAnimationFrame(pollFrame);
           })();
         }
@@ -2857,6 +3056,9 @@ Roll  = 0°  <span class="fc">// not derivable from direction alone</span>`;
     function stopCamera() {
       cameraActive = false;
       liveLm = liveWorldLm = null;
+      liveHandLm = liveHandWorldLm = null;
+      handIsGripping = false;
+      weaponDir3D    = null;
 
       if (mpCameraObj) { try { mpCameraObj.stop(); } catch (_) {} mpCameraObj = null; }
       if (mpVideoEl && mpVideoEl.srcObject) {
@@ -2903,8 +3105,9 @@ Roll  = 0°  <span class="fc">// not derivable from direction alone</span>`;
       ctx.restore();
 
       if (results.poseLandmarks) {
-        liveLm       = results.poseLandmarks;
-        liveWorldLm  = results.poseWorldLandmarks;
+        liveLm      = results.poseLandmarks;
+        liveWorldLm = results.poseWorldLandmarks;
+
         drawMpOverlay(ctx, liveLm, W, H);
 
         if (liveWorldLm) {
