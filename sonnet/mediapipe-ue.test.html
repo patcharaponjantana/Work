@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mediapipe-ue.js — Test Runner</title>
+<script src="mediapipe-ue.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 13px;
+    background: #1e1e1e;
+    color: #d4d4d4;
+    padding: 20px;
+  }
+  h1 { font-size: 18px; color: #9cdcfe; margin-bottom: 4px; }
+  #summary {
+    font-size: 15px;
+    font-weight: bold;
+    margin: 12px 0;
+    padding: 10px 14px;
+    border-radius: 6px;
+    border-left: 4px solid;
+  }
+  #summary.pass { background: #0d3a0d; border-color: #4ec94e; color: #4ec94e; }
+  #summary.fail { background: #3a0d0d; border-color: #f44747; color: #f44747; }
+
+  .suite { margin-top: 20px; }
+  .suite-name {
+    font-size: 14px;
+    font-weight: bold;
+    color: #dcdcaa;
+    margin-bottom: 6px;
+    padding-bottom: 3px;
+    border-bottom: 1px solid #333;
+  }
+  .test {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 3px 6px;
+    border-radius: 3px;
+    margin: 2px 0;
+    line-height: 1.4;
+  }
+  .test.ok  { color: #9cdcfe; }
+  .test.ok  .badge { color: #4ec94e; }
+  .test.err { color: #f44747; }
+  .test.err .badge { color: #f44747; }
+  .badge { flex-shrink: 0; width: 18px; }
+  .msg { color: #ce9178; font-size: 12px; margin-top: 1px; }
+</style>
+</head>
+<body>
+<h1>mediapipe-ue.js — Test Runner</h1>
+<div id="summary">Running…</div>
+<div id="results"></div>
+
+<script>
+'use strict';
+
+// ── Tiny test framework ───────────────────────────────────────
+
+const M   = window.MpUE;
+const out = document.getElementById('results');
+let pass = 0, fail = 0;
+
+function describe(name, fn) {
+  const suite = document.createElement('div');
+  suite.className = 'suite';
+  const title = document.createElement('div');
+  title.className = 'suite-name';
+  title.textContent = name;
+  suite.appendChild(title);
+  out.appendChild(suite);
+  // run all its inside in the context of this suite
+  window.__suite = suite;
+  fn();
+  window.__suite = null;
+}
+
+function it(name, fn) {
+  const suite = window.__suite;
+  const row   = document.createElement('div');
+  row.className = 'test';
+  const badge = document.createElement('span');
+  badge.className = 'badge';
+  const label = document.createElement('span');
+  label.textContent = name;
+
+  try {
+    fn();
+    badge.textContent = '✓';
+    row.classList.add('ok');
+    pass++;
+  } catch (e) {
+    badge.textContent = '✗';
+    row.classList.add('err');
+    fail++;
+    const msg = document.createElement('div');
+    msg.className = 'msg';
+    msg.textContent = e.message || String(e);
+    const wrap = document.createElement('div');
+    wrap.style.width = '100%';
+    wrap.appendChild(label);
+    wrap.appendChild(msg);
+    row.appendChild(badge);
+    row.appendChild(wrap);
+    suite.appendChild(row);
+    return;
+  }
+  row.appendChild(badge);
+  row.appendChild(label);
+  suite.appendChild(row);
+}
+
+// Assertion helpers
+const approx = (a, b, tol = 1e-6) => Math.abs(a - b) < tol;
+
+function assertEqual(actual, expected, msg) {
+  if (actual !== expected)
+    throw new Error(msg || `expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+}
+
+function assertOk(cond, msg) {
+  if (!cond) throw new Error(msg || 'assertion failed');
+}
+
+function assertApprox(a, b, tol = 1e-6, msg) {
+  if (!approx(a, b, tol))
+    throw new Error(msg || `expected ${b} ± ${tol}, got ${a}`);
+}
+
+// ── Landmark helpers ─────────────────────────────────────────
+
+function makeLm(overrides = {}) {
+  const base = [
+    {x:.50,y:.07,z:0},{x:.46,y:.09,z:0},{x:.44,y:.09,z:0},{x:.42,y:.09,z:0},
+    {x:.54,y:.09,z:0},{x:.56,y:.09,z:0},{x:.58,y:.09,z:0},{x:.40,y:.11,z:0},
+    {x:.60,y:.11,z:0},{x:.47,y:.13,z:0},{x:.53,y:.13,z:0},{x:.35,y:.28,z:0},
+    {x:.65,y:.28,z:0},{x:.22,y:.42,z:0},{x:.78,y:.42,z:0},{x:.10,y:.56,z:0},
+    {x:.90,y:.56,z:0},{x:.08,y:.62,z:0},{x:.92,y:.62,z:0},{x:.07,y:.60,z:0},
+    {x:.93,y:.60,z:0},{x:.09,y:.58,z:0},{x:.91,y:.58,z:0},{x:.39,y:.55,z:0},
+    {x:.61,y:.55,z:0},{x:.37,y:.72,z:0},{x:.63,y:.72,z:0},{x:.36,y:.88,z:0},
+    {x:.64,y:.88,z:0},{x:.35,y:.92,z:0},{x:.65,y:.92,z:0},{x:.33,y:.96,z:0},
+    {x:.67,y:.96,z:0},
+  ];
+  Object.entries(overrides).forEach(([i, v]) => { base[+i] = { ...base[+i], ...v }; });
+  return base;
+}
+
+/** 21-landmark hand array with controllable wrist + 4 MCPs. */
+function makeHand(wrist, indexMcp, middleMcp, ringMcp, pinkyMcp) {
+  const dummy = { x: 0, y: 0, z: 0 };
+  const lm = Array.from({ length: 21 }, () => ({ ...dummy }));
+  lm[0]  = wrist;
+  lm[5]  = indexMcp;
+  lm[9]  = middleMcp;
+  lm[13] = ringMcp;
+  lm[17] = pinkyMcp;
+  return lm;
+}
+
+// ═════════════════════════════════════════════════════════════
+// SUITE: clamp
+// ═════════════════════════════════════════════════════════════
+describe('clamp', () => {
+  it('clamps below minimum',     () => assertEqual(M.clamp(-5, 0, 10), 0));
+  it('clamps above maximum',     () => assertEqual(M.clamp(15, 0, 10), 10));
+  it('passes through in-range',  () => assertEqual(M.clamp(5,  0, 10), 5));
+  it('clamps at boundary lo',    () => assertEqual(M.clamp(0,  0, 10), 0));
+  it('clamps at boundary hi',    () => assertEqual(M.clamp(10, 0, 10), 10));
+});
+
+// ═════════════════════════════════════════════════════════════
+// SUITE: vec3 primitives
+// ═════════════════════════════════════════════════════════════
+describe('vec3normalize', () => {
+  it('normalizes (3,4,0) to unit length', () => {
+    const r = M.vec3normalize({x:3,y:4,z:0});
+    assertApprox(M.vec3len(r), 1);
+  });
+  it('returns zero vector for degenerate input', () => {
+    const r = M.vec3normalize({x:0,y:0,z:0});
+    assertEqual(r.x, 0); assertEqual(r.y, 0); assertEqual(r.z, 0);
+  });
+  it('direction preserved', () => {
+    const r = M.vec3normalize({x:0,y:0,z:5});
+    assertApprox(r.z, 1); assertApprox(r.x, 0); assertApprox(r.y, 0);
+  });
+});
+
+describe('vec3cross', () => {
+  it('X × Y = Z', () => {
+    const r = M.vec3cross({x:1,y:0,z:0}, {x:0,y:1,z:0});
+    assertApprox(r.x,0); assertApprox(r.y,0); assertApprox(r.z,1);
+  });
+  it('parallel vectors give zero cross product', () => {
+    const r = M.vec3cross({x:1,y:0,z:0}, {x:2,y:0,z:0});
+    assertApprox(M.vec3len(r), 0);
+  });
+  it('anti-commutative: a×b = -(b×a)', () => {
+    const a = {x:1,y:2,z:3}, b = {x:4,y:5,z:6};
+    const ab = M.vec3cross(a,b); const ba = M.vec3cross(b,a);
+    assertApprox(ab.x,-ba.x); assertApprox(ab.y,-ba.y); assertApprox(ab.z,-ba.z);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════
+// SUITE: computeMcpGrip
+// ═════════════════════════════════════════════════════════════
+describe('computeMcpGrip', () => {
+  it('is a function', () => assertOk(typeof M.computeMcpGrip === 'function'));
+  it('returns false for null',  () => assertEqual(M.computeMcpGrip(null), false));
+  it('returns false for short array', () => assertEqual(M.computeMcpGrip([]), false));
+
+  it('returns false for open/extended hand', () => {
+    // MCPs spread out → mcpDist ≈ indexDist → ratio near 1 → NOT gripping
+    const lm = makeHand(
+      {x:0.50, y:0.80},
+      {x:0.60, y:0.60},  // index MCP — extended
+      {x:0.50, y:0.55},
+      {x:0.40, y:0.58},
+      {x:0.35, y:0.62},
+    );
+    assertEqual(M.computeMcpGrip(lm), false);
+  });
+
+  it('returns true for closed fist', () => {
+    // MCPs pulled close to wrist (curled) → mcpDist << indexDist → GRIPPING
+    const lm = makeHand(
+      {x:0.50, y:0.80},
+      {x:0.62, y:0.70},  // curled
+      {x:0.52, y:0.68},
+      {x:0.42, y:0.68},
+      {x:0.37, y:0.72},
+    );
+    assertEqual(M.computeMcpGrip(lm), true);
+  });
+
+  it('returns false when wrist = indexMcp (degenerate, indexDist=0)', () => {
+    const z = {x:0.5, y:0.5};
+    const lm = makeHand(z, z, z, z, z);
+    assertEqual(M.computeMcpGrip(lm), false);
+  });
+
+  it('clearly gripping: mcpDist = 60% of indexDist', () => {
+    const wrist    = {x:0, y:0};
+    const indexMcp = {x:0, y:1};     // indexDist = 1
+    const allMcp   = {x:0, y:0.6};   // mcpDist = 0.6 < 0.95 ✓
+    assertEqual(M.computeMcpGrip(makeHand(wrist, allMcp, allMcp, allMcp, allMcp)), true);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════
+// SUITE: computeMcpWeaponDir
+// ═════════════════════════════════════════════════════════════
+describe('computeMcpWeaponDir', () => {
+  it('is a function', () => assertOk(typeof M.computeMcpWeaponDir === 'function'));
+  it('returns null for null',  () => assertEqual(M.computeMcpWeaponDir(null), null));
+  it('returns null for short array', () => assertEqual(M.computeMcpWeaponDir([]), null));
+
+  // Canonical test fixture: palm-up flat hand, fingers pointing +Z
+  const palmUpHand = makeHand(
+    {x:0, y:0, z:0},
+    {x: 0.05, y:0, z:0.08},   // index  MCP
+    {x: 0,    y:0, z:0.09},   // middle MCP
+    {x:-0.02, y:0, z:0.08},   // ring   MCP
+    {x:-0.04, y:0, z:0.07},   // pinky  MCP
+  );
+
+  it('returns non-null result for valid input', () => {
+    assertOk(M.computeMcpWeaponDir(palmUpHand) !== null);
+  });
+
+  it('result has weaponDir and palmNormal', () => {
+    const r = M.computeMcpWeaponDir(palmUpHand);
+    assertOk('weaponDir' in r && 'palmNormal' in r);
+  });
+
+  it('weaponDir is unit length', () => {
+    const r = M.computeMcpWeaponDir(palmUpHand);
+    assertApprox(M.vec3len(r.weaponDir), 1, 1e-5);
+  });
+
+  it('palmNormal is unit length', () => {
+    const r = M.computeMcpWeaponDir(palmUpHand);
+    assertApprox(M.vec3len(r.palmNormal), 1, 1e-5);
+  });
+
+  it('palm-up hand: palmNormal points ≈ ±Y (world up/down)', () => {
+    // MCPs in XZ plane → cross product in Y direction
+    const r = M.computeMcpWeaponDir(palmUpHand);
+    assertOk(Math.abs(r.palmNormal.y) > 0.9,
+      `palmNormal.y = ${r.palmNormal.y.toFixed(3)}, expected |y| > 0.9`);
+  });
+
+  it('weaponDir ⊥ palmNormal (dot product ≈ 0)', () => {
+    const r = M.computeMcpWeaponDir(palmUpHand);
+    const d = M.vec3dot(r.weaponDir, r.palmNormal);
+    assertApprox(Math.abs(d), 0, 1e-4);
+  });
+
+  it('weaponDir ⊥ knuckle line kvec (dot product ≈ 0)', () => {
+    const r    = M.computeMcpWeaponDir(palmUpHand);
+    const kvec = M.vec3normalize(M.vec3sub(palmUpHand[5], palmUpHand[17]));
+    const d    = Math.abs(M.vec3dot(r.weaponDir, kvec));
+    assertApprox(d, 0, 1e-3);
+  });
+
+  it('returns null for degenerate all-zero landmarks', () => {
+    const zero = {x:0,y:0,z:0};
+    assertEqual(M.computeMcpWeaponDir(makeHand(zero,zero,zero,zero,zero)), null);
+  });
+
+  it('result is invariant to uniform scale of landmarks', () => {
+    // Scaling all coordinates by 2 should not change directions
+    const scaled = makeHand(
+      {x:0, y:0, z:0},
+      {x: 0.10, y:0, z:0.16},
+      {x: 0,    y:0, z:0.18},
+      {x:-0.04, y:0, z:0.16},
+      {x:-0.08, y:0, z:0.14},
+    );
+    const r1 = M.computeMcpWeaponDir(palmUpHand);
+    const r2 = M.computeMcpWeaponDir(scaled);
+    // Directions should be the same (or negated — cross product sign may vary)
+    const dotW = Math.abs(M.vec3dot(r1.weaponDir,  r2.weaponDir));
+    const dotP = Math.abs(M.vec3dot(r1.palmNormal, r2.palmNormal));
+    assertApprox(dotW, 1, 1e-4);
+    assertApprox(dotP, 1, 1e-4);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════
+// SUITE: computeWeaponDirTwoPoint
+// ═════════════════════════════════════════════════════════════
+describe('computeWeaponDirTwoPoint', () => {
+  it('is a function', () => assertOk(typeof M.computeWeaponDirTwoPoint === 'function'));
+  it('returns null for null',  () => assertEqual(M.computeWeaponDirTwoPoint(null), null));
+  it('returns null for empty array', () => assertEqual(M.computeWeaponDirTwoPoint([]), null));
+
+  it('returns unit vector for valid input', () => {
+    const lm = makeHand({x:0,y:0,z:0},{x:.05,y:0,z:.08},{x:0,y:0,z:.09},{x:-.02,y:0,z:.08},{x:-.04,y:0,z:.07});
+    const r = M.computeWeaponDirTwoPoint(lm, 9);
+    assertOk(r !== null);
+    assertApprox(M.vec3len(r), 1, 1e-5);
+  });
+
+  it('wrist→middleMCP (idx 9): direction = normalize(lm[9]-lm[0])', () => {
+    const lm = makeHand({x:0,y:0,z:0},{x:.05,y:0,z:0},{x:0,y:0,z:.1},{x:-.02,y:0,z:0},{x:-.04,y:0,z:0});
+    const r = M.computeWeaponDirTwoPoint(lm, 9);
+    assertApprox(r.x, 0, 1e-5); assertApprox(r.y, 0, 1e-5); assertApprox(r.z, 1, 1e-5);
+  });
+
+  it('defaults to idx=9 when argument omitted', () => {
+    const lm = makeHand({x:0,y:0,z:0},{x:0,y:0,z:0},{x:0,y:1,z:0},{x:0,y:0,z:0},{x:0,y:0,z:0});
+    const r = M.computeWeaponDirTwoPoint(lm);
+    assertApprox(r.y, 1, 1e-5);
+  });
+
+  it('works for index MCP (idx 5) as target', () => {
+    const lm = makeHand({x:0,y:0,z:0},{x:1,y:0,z:0},{x:0,y:0,z:0},{x:0,y:0,z:0},{x:0,y:0,z:0});
+    const r = M.computeWeaponDirTwoPoint(lm, 5);
+    assertApprox(r.x, 1, 1e-5); assertApprox(r.y, 0, 1e-5); assertApprox(r.z, 0, 1e-5);
+  });
+
+  it('lm[5]→lm[17] (index MCP → pinky MCP) using fromIdx', () => {
+    // lm[5] at +X, lm[17] at -X → direction = -X
+    const lm = makeHand({x:0,y:0,z:0},{x:1,y:0,z:0},{x:0,y:0,z:0},{x:0,y:0,z:0},{x:-1,y:0,z:0});
+    const r = M.computeWeaponDirTwoPoint(lm, 17, 5);
+    assertApprox(r.x,-1,1e-5); assertApprox(r.y,0,1e-5); assertApprox(r.z,0,1e-5);
+  });
+
+  it('returns null when wrist=MCP (degenerate)', () => {
+    const z = {x:0,y:0,z:0};
+    assertEqual(M.computeWeaponDirTwoPoint(makeHand(z,z,z,z,z), 9), null);
+  });
+
+  it('scale-invariant', () => {
+    const lm1 = makeHand({x:0,y:0,z:0},{x:0,y:0,z:0},{x:0,y:0,z:1},{x:0,y:0,z:0},{x:0,y:0,z:0});
+    const lm2 = makeHand({x:0,y:0,z:0},{x:0,y:0,z:0},{x:0,y:0,z:10},{x:0,y:0,z:0},{x:0,y:0,z:0});
+    const r1 = M.computeWeaponDirTwoPoint(lm1, 9);
+    const r2 = M.computeWeaponDirTwoPoint(lm2, 9);
+    assertApprox(r1.x,r2.x); assertApprox(r1.y,r2.y); assertApprox(r1.z,r2.z);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════
+// SUITE: computeWristRollAngleDeg
+// ═════════════════════════════════════════════════════════════
+describe('computeWristRollAngleDeg', () => {
+  it('is a function', () => assertOk(typeof M.computeWristRollAngleDeg === 'function'));
+
+  it('returns NaN for zero forearm vector', () => {
+    assertOk(isNaN(M.computeWristRollAngleDeg({x:0,y:1,z:0}, {x:0,y:0,z:0})));
+  });
+
+  it('palm-up (normal = +Y), forearm along +X → 0°', () => {
+    const deg = M.computeWristRollAngleDeg({x:0,y:1,z:0}, {x:1,y:0,z:0});
+    assertApprox(deg, 0, 1e-4, `expected 0°, got ${deg.toFixed(4)}°`);
+  });
+
+  it('palm-down (normal = -Y), forearm along +X → ±180°', () => {
+    const deg = M.computeWristRollAngleDeg({x:0,y:-1,z:0}, {x:1,y:0,z:0});
+    assertApprox(Math.abs(deg), 180, 1e-4, `expected ±180°, got ${deg.toFixed(4)}°`);
+  });
+
+  it('palm facing +Z (toward camera), forearm along +X → +90°', () => {
+    const deg = M.computeWristRollAngleDeg({x:0,y:0,z:1}, {x:1,y:0,z:0});
+    assertApprox(deg, 90, 1e-4, `expected 90°, got ${deg.toFixed(4)}°`);
+  });
+
+  it('palm facing -Z (away from camera), forearm along +X → -90°', () => {
+    const deg = M.computeWristRollAngleDeg({x:0,y:0,z:-1}, {x:1,y:0,z:0});
+    assertApprox(deg, -90, 1e-4, `expected -90°, got ${deg.toFixed(4)}°`);
+  });
+
+  it('flipping palmNormal negates the sign by 180° (antisymmetric)', () => {
+    const pn  = M.vec3normalize({x:1, y:2, z:0.5});
+    const npn = M.vec3normalize({x:-1, y:-2, z:-0.5});
+    const fa  = {x:1, y:0, z:0};
+    const a = M.computeWristRollAngleDeg(pn,  fa);
+    const b = M.computeWristRollAngleDeg(npn, fa);
+    assertOk(!isNaN(a) && !isNaN(b));
+    const diff = Math.abs(Math.abs(a - b) - 180);
+    assertApprox(diff, 0, 1e-3,
+      `expected |a-b| ≈ 180, got |${a.toFixed(2)}-${b.toFixed(2)}| = ${Math.abs(a-b).toFixed(3)}`);
+  });
+
+  it('invariant to scale of palmNormal', () => {
+    const fa = {x:1,y:0,z:0};
+    const a  = M.computeWristRollAngleDeg({x:0,y:2, z:0}, fa);
+    const b  = M.computeWristRollAngleDeg({x:0,y:10,z:0}, fa);
+    assertApprox(a, b, 1e-4, `expected same angle, got ${a} vs ${b}`);
+  });
+
+  it('invariant to scale of forearmDir', () => {
+    const pn = {x:0,y:1,z:0};
+    const a  = M.computeWristRollAngleDeg(pn, {x:1,y:0,z:0});
+    const b  = M.computeWristRollAngleDeg(pn, {x:5,y:0,z:0});
+    assertApprox(a, b, 1e-4, `expected same angle, got ${a} vs ${b}`);
+  });
+
+  it('45° palm tilt gives ≈45°', () => {
+    // palm normal halfway between +Y and +Z: (0, 1, 1) normalised
+    const pn  = M.vec3normalize({x:0, y:1, z:1});
+    const deg = M.computeWristRollAngleDeg(pn, {x:1,y:0,z:0});
+    assertApprox(deg, 45, 1e-3, `expected 45°, got ${deg.toFixed(4)}°`);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════
+// SUITE: gesture detectors
+// ═════════════════════════════════════════════════════════════
+describe('detectAttack', () => {
+  it('returns false for null', () => assertEqual(M.detectAttack(null), false));
+  it('returns true when right wrist raised above shoulder', () => {
+    const lm = makeLm({ 12: {y:0.50}, 16: {y:0.10} });
+    assertEqual(M.detectAttack(lm), true);
+  });
+  it('returns false when right wrist below shoulder', () => {
+    const lm = makeLm({ 12: {y:0.28}, 16: {y:0.60} });
+    assertEqual(M.detectAttack(lm), false);
+  });
+});
+
+describe('detectDodge', () => {
+  it('returns false for null', () => assertEqual(M.detectDodge(null), false));
+  it('returns false when torso centered', () => {
+    assertEqual(M.detectDodge(makeLm({11:{x:0.35},12:{x:0.65}})), false);
+  });
+  it('returns true when torso leans far left', () => {
+    assertEqual(M.detectDodge(makeLm({11:{x:0.10},12:{x:0.40}})), true);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════
+// SUITE: directionToRotator
+// ═════════════════════════════════════════════════════════════
+describe('directionToRotator', () => {
+  it('forward direction → pitch=0, yaw=0', () => {
+    const r = M.directionToRotator({x:1,y:0,z:0});
+    assertApprox(r.pitch, 0); assertApprox(r.yaw, 0);
+  });
+  it('upward direction {0,0,1} → pitch=-90', () => {
+    const r = M.directionToRotator({x:0,y:0,z:1});
+    assertApprox(r.pitch, -90, 1e-3);
+  });
+  it('right direction {0,1,0} → yaw=90', () => {
+    const r = M.directionToRotator({x:0,y:1,z:0});
+    assertApprox(r.yaw, 90, 1e-3);
+  });
+  it('roll is always 0', () => {
+    [{x:1,y:0,z:0},{x:0,y:1,z:0},{x:0,y:0,z:1},{x:1,y:1,z:0}]
+      .forEach(d => assertEqual(M.directionToRotator(d).roll, 0));
+  });
+});
+
+// ═════════════════════════════════════════════════════════════
+// SUMMARY
+// ═════════════════════════════════════════════════════════════
+const sumEl = document.getElementById('summary');
+const total = pass + fail;
+sumEl.textContent = `${pass} / ${total} tests passed${fail ? `  —  ${fail} FAILED` : '  ✓ ALL PASS'}`;
+sumEl.className   = fail ? 'fail' : 'pass';
+</script>
+</body>
+</html>

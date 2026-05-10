@@ -480,6 +480,312 @@ describe('LM', () => {
   it('LEFT_HIP = 23', () => assert.equal(M.LM.LEFT_HIP, 23));
 });
 
+// ─── computeMcpGrip ───────────────────────────────────────────
+// Landmark layout used for grip tests:
+//   lm[0]  = wrist
+//   lm[5]  = index  MCP
+//   lm[9]  = middle MCP
+//   lm[13] = ring   MCP
+//   lm[17] = pinky  MCP
+// All other indices are filled with dummy {x:0,y:0,z:0} to satisfy length check.
+
+/** Build a minimal 21-landmark hand array with controllable wrist + 4 MCPs. */
+function makeHand(wrist, indexMcp, middleMcp, ringMcp, pinkyMcp) {
+  const dummy = { x: 0, y: 0, z: 0 };
+  const lm = Array.from({ length: 21 }, () => ({ ...dummy }));
+  lm[0]  = wrist;
+  lm[5]  = indexMcp;
+  lm[9]  = middleMcp;
+  lm[13] = ringMcp;
+  lm[17] = pinkyMcp;
+  return lm;
+}
+
+describe('computeMcpGrip', () => {
+  it('is a function', () => assert.ok(typeof M.computeMcpGrip === 'function'));
+
+  it('returns false for null input', () => assert.equal(M.computeMcpGrip(null), false));
+  it('returns false for short array', () => assert.equal(M.computeMcpGrip([]), false));
+
+  it('returns false for open/extended hand — MCPs far from wrist', () => {
+    // Wrist at bottom, MCP knuckles extended upward — mcpDist ≈ indexDist
+    const lm = makeHand(
+      { x: 0.50, y: 0.80 },  // wrist
+      { x: 0.60, y: 0.60 },  // index  MCP (extended, ratio ≈ 0.965)
+      { x: 0.50, y: 0.55 },  // middle MCP
+      { x: 0.40, y: 0.58 },  // ring   MCP
+      { x: 0.35, y: 0.62 },  // pinky  MCP
+    );
+    assert.equal(M.computeMcpGrip(lm), false);
+  });
+
+  it('returns true for closed fist — MCPs contracted toward wrist', () => {
+    // Wrist at bottom, MCP knuckles pulled close (curled fist)
+    const lm = makeHand(
+      { x: 0.50, y: 0.80 },  // wrist
+      { x: 0.62, y: 0.70 },  // index  MCP (ratio ≈ 0.68 — clearly gripping)
+      { x: 0.52, y: 0.68 },  // middle MCP
+      { x: 0.42, y: 0.68 },  // ring   MCP
+      { x: 0.37, y: 0.72 },  // pinky  MCP
+    );
+    assert.equal(M.computeMcpGrip(lm), true);
+  });
+
+  it('returns false when wrist and index MCP coincide (degenerate)', () => {
+    const lm = makeHand(
+      { x: 0.5, y: 0.5 },
+      { x: 0.5, y: 0.5 },  // same as wrist — indexDist = 0
+      { x: 0.5, y: 0.5 },
+      { x: 0.5, y: 0.5 },
+      { x: 0.5, y: 0.5 },
+    );
+    assert.equal(M.computeMcpGrip(lm), false);
+  });
+
+  it('borderline case: ratio exactly at 0.95 → not gripping', () => {
+    // mcpDist = 0.95 × indexDist → strict less-than fails
+    const wrist    = { x: 0, y: 0 };
+    const indexMcp = { x: 1, y: 0 };   // indexDist = 1
+    // Put all 4 MCPs such that mcpCx = 0.95, mcpCy = 0 → mcpDist = 0.95
+    const mcp = { x: 0.95, y: 0 };
+    const lm = makeHand(wrist, indexMcp, mcp, mcp, mcp);
+    // mcpCx = (1+0.95+0.95+0.95)/4 = 0.9625; mcpDist = 0.9625; 0.9625 < 0.95? No
+    assert.equal(M.computeMcpGrip(lm), false);
+  });
+
+  it('clearly gripping: mcpDist is 60% of indexDist', () => {
+    const wrist    = { x: 0, y: 0 };
+    const indexMcp = { x: 0, y: 1 };   // indexDist = 1
+    const allMcp   = { x: 0, y: 0.6 }; // each MCP at 0.6 → mcpDist = 0.6, 0.6 < 0.95 ✓
+    const lm = makeHand(wrist, allMcp, allMcp, allMcp, allMcp);
+    assert.equal(M.computeMcpGrip(lm), true);
+  });
+});
+
+// ─── computeMcpWeaponDir ──────────────────────────────────────
+
+describe('computeMcpWeaponDir', () => {
+  it('is a function', () => assert.ok(typeof M.computeMcpWeaponDir === 'function'));
+
+  it('returns null for null input', () => assert.equal(M.computeMcpWeaponDir(null), null));
+  it('returns null for short array', () => assert.equal(M.computeMcpWeaponDir([]), null));
+
+  it('returns an object with weaponDir and palmNormal', () => {
+    // Flat hand: palm up (+Y), fingers along +Z
+    const lm = makeHand(
+      { x: 0, y: 0, z: 0 },              // wrist
+      { x:  0.05, y: 0, z: 0.08 },       // index  MCP
+      { x:  0,    y: 0, z: 0.09 },       // middle MCP
+      { x: -0.02, y: 0, z: 0.08 },       // ring   MCP
+      { x: -0.04, y: 0, z: 0.07 },       // pinky  MCP
+    );
+    const r = M.computeMcpWeaponDir(lm);
+    assert.ok(r !== null, 'expected non-null result');
+    assert.ok('weaponDir'  in r, 'missing weaponDir');
+    assert.ok('palmNormal' in r, 'missing palmNormal');
+  });
+
+  it('weaponDir and palmNormal are unit vectors', () => {
+    const lm = makeHand(
+      { x: 0, y: 0, z: 0 },
+      { x:  0.05, y: 0, z: 0.08 },
+      { x:  0,    y: 0, z: 0.09 },
+      { x: -0.02, y: 0, z: 0.08 },
+      { x: -0.04, y: 0, z: 0.07 },
+    );
+    const r = M.computeMcpWeaponDir(lm);
+    assert.ok(approx(M.vec3len(r.weaponDir),  1, 1e-5), 'weaponDir not unit length');
+    assert.ok(approx(M.vec3len(r.palmNormal), 1, 1e-5), 'palmNormal not unit length');
+  });
+
+  it('palm-up flat hand: palmNormal points ≈ +Y (world up)', () => {
+    // Palm facing +Y: MCPs are all in the XZ plane (y ≈ 0)
+    const lm = makeHand(
+      { x: 0, y: 0, z: 0 },
+      { x:  0.05, y: 0, z: 0.08 },
+      { x:  0,    y: 0, z: 0.09 },
+      { x: -0.02, y: 0, z: 0.08 },
+      { x: -0.04, y: 0, z: 0.07 },
+    );
+    const r = M.computeMcpWeaponDir(lm);
+    // palmNormal should be close to (0, ±1, 0); accept both signs
+    assert.ok(Math.abs(r.palmNormal.y) > 0.9, `palmNormal.y=${r.palmNormal.y.toFixed(3)} expected ≈ ±1`);
+  });
+
+  it('weaponDir is perpendicular to palmNormal', () => {
+    const lm = makeHand(
+      { x: 0, y: 0, z: 0 },
+      { x:  0.05, y: 0, z: 0.08 },
+      { x:  0,    y: 0, z: 0.09 },
+      { x: -0.02, y: 0, z: 0.08 },
+      { x: -0.04, y: 0, z: 0.07 },
+    );
+    const r = M.computeMcpWeaponDir(lm);
+    const d = M.vec3dot(r.weaponDir, r.palmNormal);
+    assert.ok(Math.abs(d) < 1e-4, `weaponDir · palmNormal = ${d.toFixed(6)} (expected ≈ 0)`);
+  });
+
+  it('weaponDir is perpendicular to knuckle line (kvec)', () => {
+    const lm = makeHand(
+      { x: 0, y: 0, z: 0 },
+      { x:  0.06, y: 0, z: 0.08 },
+      { x:  0,    y: 0, z: 0.09 },
+      { x: -0.03, y: 0, z: 0.08 },
+      { x: -0.05, y: 0, z: 0.07 },
+    );
+    const r = M.computeMcpWeaponDir(lm);
+    const kvec = M.vec3sub(lm[5], lm[17]);
+    const d = Math.abs(M.vec3dot(M.vec3normalize(kvec), r.weaponDir));
+    assert.ok(d < 1e-3, `weaponDir · kvec = ${d.toFixed(6)} (expected ≈ 0)`);
+  });
+
+  it('returns null for degenerate input where all landmarks coincide', () => {
+    const zero = { x: 0, y: 0, z: 0 };
+    const lm = makeHand(zero, zero, zero, zero, zero);
+    assert.equal(M.computeMcpWeaponDir(lm), null);
+  });
+});
+
+// ─── computeWeaponDirTwoPoint ─────────────────────────────────
+
+describe('computeWeaponDirTwoPoint', () => {
+  it('is a function', () => assert.ok(typeof M.computeWeaponDirTwoPoint === 'function'));
+  it('returns null for null input', () => assert.equal(M.computeWeaponDirTwoPoint(null), null));
+  it('returns null for empty array', () => assert.equal(M.computeWeaponDirTwoPoint([]), null));
+
+  it('returns a unit vector for valid input', () => {
+    const lm = makeHand(
+      {x:0, y:0, z:0},
+      {x:0.05, y:0, z:0.08},
+      {x:0, y:0, z:0.09},   // lm[9] = middle MCP
+      {x:-0.02, y:0, z:0.08},
+      {x:-0.04, y:0, z:0.07},
+    );
+    const r = M.computeWeaponDirTwoPoint(lm, 9);
+    assert.ok(r !== null);
+    assert.ok(approx(M.vec3len(r), 1, 1e-5));
+  });
+
+  it('wrist→middleMCP default (idx 9): direction matches normalize(lm[9]-lm[0])', () => {
+    const lm = makeHand(
+      {x:0, y:0, z:0},
+      {x:0.05, y:0, z:0},
+      {x:0, y:0, z:0.1},   // lm[9] along +Z
+      {x:-0.02, y:0, z:0},
+      {x:-0.04, y:0, z:0},
+    );
+    const r = M.computeWeaponDirTwoPoint(lm, 9);
+    assert.ok(approx(r.x, 0, 1e-5) && approx(r.y, 0, 1e-5) && approx(r.z, 1, 1e-5));
+  });
+
+  it('uses idx=9 when mcpIdx argument is omitted', () => {
+    const lm = makeHand(
+      {x:0, y:0, z:0},
+      {x:0, y:0, z:0},
+      {x:0, y:1, z:0},   // lm[9] along +Y
+      {x:0, y:0, z:0},
+      {x:0, y:0, z:0},
+    );
+    const r = M.computeWeaponDirTwoPoint(lm);
+    assert.ok(approx(r.x, 0, 1e-5) && approx(r.y, 1, 1e-5) && approx(r.z, 0, 1e-5));
+  });
+
+  it('works for index MCP (idx 5) as target', () => {
+    const lm = makeHand(
+      {x:0, y:0, z:0},
+      {x:1, y:0, z:0},   // lm[5] along +X
+      {x:0, y:0, z:0},
+      {x:0, y:0, z:0},
+      {x:0, y:0, z:0},
+    );
+    const r = M.computeWeaponDirTwoPoint(lm, 5);
+    assert.ok(approx(r.x, 1, 1e-5) && approx(r.y, 0, 1e-5) && approx(r.z, 0, 1e-5));
+  });
+
+  it('lm[5]→lm[17]: index MCP to pinky MCP direction', () => {
+    const lm = makeHand(
+      {x:0, y:0, z:0},
+      {x:1, y:0, z:0},   // lm[5]  = +X
+      {x:0, y:0, z:0},
+      {x:0, y:0, z:0},
+      {x:-1, y:0, z:0},  // lm[17] = -X
+    );
+    // direction from lm[5](+X) → lm[17](-X) should be -X
+    const r = M.computeWeaponDirTwoPoint(lm, 17, 5);
+    assert.ok(approx(r.x, -1, 1e-5) && approx(r.y, 0, 1e-5) && approx(r.z, 0, 1e-5));
+  });
+
+  it('returns null when wrist and target MCP coincide (degenerate)', () => {
+    const zero = {x:0, y:0, z:0};
+    const lm = makeHand(zero, zero, zero, zero, zero);
+    assert.equal(M.computeWeaponDirTwoPoint(lm, 9), null);
+  });
+
+  it('result is scale-invariant', () => {
+    const lm1 = makeHand({x:0,y:0,z:0}, {x:0,y:0,z:0}, {x:0,y:0,z:1},   {x:0,y:0,z:0}, {x:0,y:0,z:0});
+    const lm2 = makeHand({x:0,y:0,z:0}, {x:0,y:0,z:0}, {x:0,y:0,z:10},  {x:0,y:0,z:0}, {x:0,y:0,z:0});
+    const r1 = M.computeWeaponDirTwoPoint(lm1, 9);
+    const r2 = M.computeWeaponDirTwoPoint(lm2, 9);
+    assert.ok(approx(r1.x, r2.x) && approx(r1.y, r2.y) && approx(r1.z, r2.z));
+  });
+});
+
+// ─── computeWristRollAngleDeg ─────────────────────────────────
+
+describe('computeWristRollAngleDeg', () => {
+  it('is a function', () => assert.ok(typeof M.computeWristRollAngleDeg === 'function'));
+
+  it('returns NaN for zero forearm vector', () => {
+    assert.ok(isNaN(M.computeWristRollAngleDeg({ x:0,y:1,z:0 }, { x:0,y:0,z:0 })));
+  });
+
+  it('palm-up (normal = +Y), forearm along +X → 0 degrees', () => {
+    const deg = M.computeWristRollAngleDeg({ x:0,y:1,z:0 }, { x:1,y:0,z:0 });
+    assert.ok(approx(deg, 0, 1e-4), `expected 0, got ${deg}`);
+  });
+
+  it('palm-down (normal = -Y), forearm along +X → ±180 degrees', () => {
+    const deg = M.computeWristRollAngleDeg({ x:0,y:-1,z:0 }, { x:1,y:0,z:0 });
+    assert.ok(approx(Math.abs(deg), 180, 1e-4), `expected ±180, got ${deg}`);
+  });
+
+  it('palm facing camera (normal = +Z), forearm along +X → +90 degrees', () => {
+    const deg = M.computeWristRollAngleDeg({ x:0,y:0,z:1 }, { x:1,y:0,z:0 });
+    assert.ok(approx(deg, 90, 1e-4), `expected 90, got ${deg}`);
+  });
+
+  it('palm facing away from camera (normal = -Z), forearm along +X → −90 degrees', () => {
+    const deg = M.computeWristRollAngleDeg({ x:0,y:0,z:-1 }, { x:1,y:0,z:0 });
+    assert.ok(approx(deg, -90, 1e-4), `expected -90, got ${deg}`);
+  });
+
+  it('roll is antisymmetric: flipping palmNormal negates the angle', () => {
+    const pn  = M.vec3normalize({ x:1,  y:2,  z:0.5 });
+    const npn = M.vec3normalize({ x:-1, y:-2, z:-0.5 });
+    const fa  = { x:1, y:0, z:0 };
+    const a   = M.computeWristRollAngleDeg(pn,  fa);
+    const b   = M.computeWristRollAngleDeg(npn, fa);
+    assert.ok(!isNaN(a) && !isNaN(b));
+    // a and b should differ by 180 (mod 360) since flipping normal flips the sign
+    const diff = Math.abs(Math.abs(a - b) - 180);
+    assert.ok(diff < 1e-3, `expected |a - b| ≈ 180, got |${a.toFixed(3)} - ${b.toFixed(3)}| = ${Math.abs(a-b).toFixed(3)}`);
+  });
+
+  it('result is invariant to scale of palmNormal', () => {
+    const fa  = { x: 1, y: 0, z: 0 };
+    const a = M.computeWristRollAngleDeg({ x:0, y:2,  z:0 }, fa);
+    const b = M.computeWristRollAngleDeg({ x:0, y:10, z:0 }, fa);
+    assert.ok(approx(a, b, 1e-4), `expected same angle, got ${a} vs ${b}`);
+  });
+
+  it('result is invariant to scale of forearmDir', () => {
+    const pn = { x: 0, y: 1, z: 0 };
+    const a  = M.computeWristRollAngleDeg(pn, { x:1, y:0, z:0 });
+    const b  = M.computeWristRollAngleDeg(pn, { x:5, y:0, z:0 });
+    assert.ok(approx(a, b, 1e-4), `expected same angle, got ${a} vs ${b}`);
+  });
+});
+
 // ─── rotateVec3ByEuler ────────────────────────────────────────
 // Convention: Roll=Rz first, then Pitch=Rx, then Yaw=Ry
 // (intrinsic ZXY order: Ry · Rx · Rz · v)

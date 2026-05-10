@@ -327,6 +327,131 @@
     return { x: x3, y: y3, z: z3 };
   }
 
+  // ── Hand landmark geometry (grip + weapon direction + wrist roll) ────────
+
+  /**
+   * Grip detection from 21 image-normalised hand landmarks.
+   * Uses only wrist (lm[0]) and MCP knuckles (lm[5,9,13,17]).
+   * Finger tips are NOT needed — robust when a weapon occludes curled fingers.
+   *
+   * Principle: when fingers curl into a fist the MCP knuckle centre moves
+   * closer to the wrist relative to the index-MCP-to-wrist distance.
+   *
+   * @param {Array<{x,y}>} lm  21 MediaPipe Hand image-normalised landmarks
+   * @returns {boolean}  true when hand appears to be gripping
+   */
+  function computeMcpGrip(lm) {
+    if (!lm || lm.length < 18) return false;
+    const wr    = lm[0];
+    const mcpCx = (lm[5].x + lm[9].x + lm[13].x + lm[17].x) / 4;
+    const mcpCy = (lm[5].y + lm[9].y + lm[13].y + lm[17].y) / 4;
+    const mcpDist   = Math.hypot(mcpCx - wr.x, mcpCy - wr.y);
+    const indexDist = Math.hypot(lm[5].x - wr.x, lm[5].y - wr.y);
+    if (indexDist < 1e-6) return false;
+    return mcpDist < indexDist * 0.95;
+  }
+
+  /**
+   * Compute weapon direction and palm normal from 21 world-space hand landmarks.
+   * Uses only wrist (lm[0]) and MCP knuckles (lm[5,9,13,17]).
+   *
+   * Geometry (all in the same world-space frame as the input landmarks):
+   *   kvec   = index_MCP(lm[5]) → pinky_MCP(lm[17])   across knuckles, ⊥ weapon shaft
+   *   mcpW   = wrist(lm[0]) → knuckle_centre            roughly along weapon shaft
+   *   pn     = cross(mcpW, kvec)                        palm normal (out of palm face)
+   *   shaft  = cross(kvec, pn)                          weapon shaft direction
+   *
+   * @param {Array<{x,y,z}>} lm  21 MediaPipe Hand world-space landmarks (metres)
+   * @returns {{ weaponDir: {x,y,z}, palmNormal: {x,y,z} } | null}
+   *   weaponDir   unit vector pointing from wrist toward weapon tip
+   *   palmNormal  unit vector pointing out of the palm face
+   *   Returns null if landmarks are missing or geometry is degenerate.
+   */
+  function computeMcpWeaponDir(lm) {
+    if (!lm || lm.length < 18) return null;
+    const kvec = vec3sub(lm[5], lm[17]);  // index MCP → pinky MCP (across knuckles)
+    const mcpCenter = {
+      x: (lm[5].x + lm[9].x + lm[13].x + lm[17].x) / 4,
+      y: (lm[5].y + lm[9].y + lm[13].y + lm[17].y) / 4,
+      z: (lm[5].z + lm[9].z + lm[13].z + lm[17].z) / 4,
+    };
+    const mcpW      = vec3sub(mcpCenter, lm[0]);  // wrist → knuckle centre
+    const pn        = vec3cross(mcpW, kvec);       // palm normal
+    const shaft     = vec3cross(kvec, pn);          // weapon shaft
+    const palmNormal = vec3normalize(pn);
+    const weaponDir  = vec3normalize(shaft);
+    if (isNaN(weaponDir.x) || isNaN(palmNormal.x)) return null;
+    return { weaponDir, palmNormal };
+  }
+
+  /**
+   * Compute wrist roll angle in degrees from palm normal and forearm direction.
+   *
+   * Roll = 0   when palm faces world-up   (projected ⊥ to forearm).
+   * Roll = +90 when palm faces world-right.
+   * Roll = ±180 when palm faces world-down.
+   *
+   * @param {{ x,y,z }} palmNormal  palm normal vector (points out of palm face; need not be unit)
+   * @param {{ x,y,z }} forearmDir  direction from elbow to wrist (need not be unit)
+   * @returns {number}  roll angle in degrees (−180 … 180), or NaN if inputs are degenerate
+   */
+  /**
+   * Weapon direction from any two hand landmarks.
+   * Both points should be on the back of the hand so they stay visible
+   * when the fingers are curled around a weapon handle.
+   *
+   * Common pairs (MediaPipe Hand landmark indices):
+   *   fromIdx=5,  toIdx=17  index_MCP → pinky_MCP   (across knuckles)
+   *   fromIdx=0,  toIdx=9   wrist     → middle_MCP   (hand axis)
+   *
+   * @param {Array<{x,y,z}>} lm        21 MediaPipe Hand world-space landmarks (metres)
+   * @param {number} [toIdx=9]         target landmark index
+   * @param {number} [fromIdx=0]       source landmark index (default: wrist)
+   * @returns {{ x,y,z } | null}  normalised direction vector, or null if degenerate
+   */
+  function computeWeaponDirTwoPoint(lm, toIdx, fromIdx) {
+    const from = (fromIdx != null) ? fromIdx : 0;
+    const to   = (toIdx   != null) ? toIdx   : 9;
+    if (!lm || lm.length <= Math.max(from, to)) return null;
+    const dir = vec3normalize({
+      x: lm[to].x - lm[from].x,
+      y: lm[to].y - lm[from].y,
+      z: lm[to].z - lm[from].z,
+    });
+    return isNaN(dir.x) ? null : dir;
+  }
+
+  function computeWristRollAngleDeg(palmNormal, forearmDir) {
+    const fa = vec3normalize(forearmDir);
+    if (isNaN(fa.x)) return NaN;
+
+    // Project palm normal perpendicular to the forearm axis
+    const dot  = vec3dot(palmNormal, fa);
+    const perp = vec3normalize({
+      x: palmNormal.x - dot * fa.x,
+      y: palmNormal.y - dot * fa.y,
+      z: palmNormal.z - dot * fa.z,
+    });
+    if (isNaN(perp.x)) return NaN;  // palm normal is parallel to forearm — degenerate
+
+    // Reference vector: world-up (0,1,0) projected off the forearm
+    const up    = { x: 0, y: 1, z: 0 };
+    const upDot = vec3dot(up, fa);
+    const upRef = vec3normalize({
+      x: up.x - upDot * fa.x,
+      y: up.y - upDot * fa.y,
+      z: up.z - upDot * fa.z,
+    });
+    if (isNaN(upRef.x)) return NaN;  // forearm is vertical — upRef is degenerate
+
+    // Second tangent: forearm × upRef (completes the perpendicular frame)
+    const tang = vec3cross(fa, upRef);
+
+    const cosA = vec3dot(perp, upRef);
+    const sinA = vec3dot(perp, tang);
+    return Math.atan2(sinA, cosA) * (180 / Math.PI);
+  }
+
   // ── Public API ────────────────────────────────────────────────
 
   const api = {
@@ -357,6 +482,11 @@
     detectGuard,
     detectDodge,
     detectCrouch,
+    // hand geometry (grip / weapon direction / wrist roll)
+    computeMcpGrip,
+    computeMcpWeaponDir,
+    computeWeaponDirTwoPoint,
+    computeWristRollAngleDeg,
     // landmark index map (useful for consumers)
     LM,
   };
