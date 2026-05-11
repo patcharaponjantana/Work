@@ -480,6 +480,73 @@ describe('LM', () => {
   it('LEFT_HIP = 23', () => assert.equal(M.LM.LEFT_HIP, 23));
 });
 
+// ─── clampAngularStep ─────────────────────────────────────────
+
+describe('clampAngularStep', () => {
+  it('is a function', () => assert.ok(typeof M.clampAngularStep === 'function'));
+
+  it('returns next unchanged when angle is within limit', () => {
+    // Both vectors along +X — angle = 0, always within any limit
+    const r = M.clampAngularStep({x:1,y:0,z:0}, {x:1,y:0,z:0}, 15);
+    assert.ok(approx(r.x, 1, 1e-5) && approx(r.y, 0, 1e-5) && approx(r.z, 0, 1e-5));
+  });
+
+  it('returns next unchanged when angle < maxDeg (small rotation)', () => {
+    // 10° rotation from +X toward +Y; limit = 15° → passes through
+    const angle = 10 * Math.PI / 180;
+    const next = { x: Math.cos(angle), y: Math.sin(angle), z: 0 };
+    const prev = { x: 1, y: 0, z: 0 };
+    const r = M.clampAngularStep(next, prev, 15);
+    assert.ok(approx(M.vec3dot(r, M.vec3normalize(next)), 1, 1e-5));
+  });
+
+  it('clamps to exactly maxDeg when angle exceeds limit', () => {
+    // 90° rotation from +X to +Y; limit = 30° → result should be 30° from +X
+    const next = { x: 0, y: 1, z: 0 };
+    const prev = { x: 1, y: 0, z: 0 };
+    const r = M.clampAngularStep(next, prev, 30);
+    const actualAngleDeg = Math.acos(M.clamp(M.vec3dot(r, prev), -1, 1)) * 180 / Math.PI;
+    assert.ok(approx(actualAngleDeg, 30, 0.1), `expected 30°, got ${actualAngleDeg.toFixed(4)}°`);
+  });
+
+  it('result is a unit vector', () => {
+    const r = M.clampAngularStep({x:0,y:1,z:0}, {x:1,y:0,z:0}, 30);
+    assert.ok(approx(M.vec3len(r), 1, 1e-5));
+  });
+
+  it('180° flip clamped to maxDeg', () => {
+    // Opposite direction — angle = 180°; limit = 15° → result is 15° from prev
+    const next = { x: -1, y: 0, z: 0 };
+    const prev = { x:  1, y: 0, z: 0 };
+    const r = M.clampAngularStep(next, prev, 15);
+    const actualAngleDeg = Math.acos(M.clamp(M.vec3dot(r, prev), -1, 1)) * 180 / Math.PI;
+    assert.ok(approx(actualAngleDeg, 15, 0.1), `expected 15°, got ${actualAngleDeg.toFixed(4)}°`);
+  });
+
+  it('maxDeg=0 always returns prev', () => {
+    const next = { x: 0, y: 1, z: 0 };
+    const prev = { x: 1, y: 0, z: 0 };
+    const r = M.clampAngularStep(next, prev, 0);
+    assert.ok(approx(r.x, 1, 1e-5) && approx(r.y, 0, 1e-5));
+  });
+
+  it('maxDeg=180 always returns next', () => {
+    const next = M.vec3normalize({ x: 1, y: 2, z: 3 });
+    const prev = { x: 1, y: 0, z: 0 };
+    const r = M.clampAngularStep(next, prev, 180);
+    assert.ok(approx(r.x, next.x, 1e-5) && approx(r.y, next.y, 1e-5) && approx(r.z, next.z, 1e-5));
+  });
+
+  it('works in 3D (not just XY plane)', () => {
+    const next = { x: 0, y: 0, z: 1 };
+    const prev = { x: 1, y: 0, z: 0 };
+    const r = M.clampAngularStep(next, prev, 45);
+    const angleDeg = Math.acos(M.clamp(M.vec3dot(r, prev), -1, 1)) * 180 / Math.PI;
+    assert.ok(approx(angleDeg, 45, 0.1));
+    assert.ok(approx(M.vec3len(r), 1, 1e-5));
+  });
+});
+
 // ─── computeMcpGrip ───────────────────────────────────────────
 // Landmark layout used for grip tests:
 //   lm[0]  = wrist
@@ -886,5 +953,122 @@ describe('rotateVec3ByEuler', () => {
     assert.ok(approx(r5.x, r1.x * 5, 1e-5));
     assert.ok(approx(r5.y, r1.y * 5, 1e-5));
     assert.ok(approx(r5.z, r1.z * 5, 1e-5));
+  });
+});
+
+// ─── detectBlockPose ─────────────────────────────────────────
+
+describe('detectBlockPose', () => {
+  it('is a function', () => assert.ok(typeof M.detectBlockPose === 'function'));
+  it('returns false for null',  () => assert.equal(M.detectBlockPose(null),  false));
+  it('returns false for empty', () => assert.equal(M.detectBlockPose([]),    false));
+
+  it('returns true when both wrists are in the chest zone', () => {
+    // Default makeLm has wrists (15, 16) far below hips — not in chest zone.
+    // Override to put both near the mid-torso area.
+    const lm = makeLm({
+      11: {x:0.35, y:0.28},  // L shoulder
+      12: {x:0.65, y:0.28},  // R shoulder
+      15: {x:0.40, y:0.40},  // L wrist — between shoulder and hip, near centre
+      16: {x:0.60, y:0.40},  // R wrist
+      23: {x:0.39, y:0.55},  // L hip
+      24: {x:0.61, y:0.55},  // R hip
+    });
+    assert.equal(M.detectBlockPose(lm), true);
+  });
+
+  it('returns false when only right wrist is at chest', () => {
+    const lm = makeLm({
+      11: {x:0.35, y:0.28}, 12: {x:0.65, y:0.28},
+      15: {x:0.40, y:0.80},  // L wrist below hip — not in chest zone
+      16: {x:0.60, y:0.40},  // R wrist in chest zone
+      23: {x:0.39, y:0.55}, 24: {x:0.61, y:0.55},
+    });
+    assert.equal(M.detectBlockPose(lm), false);
+  });
+
+  it('returns false when both wrists are raised above shoulders', () => {
+    const lm = makeLm({
+      11: {x:0.35, y:0.28}, 12: {x:0.65, y:0.28},
+      15: {x:0.40, y:0.10},  // above shoulder (y < shoulderY - 0.04)
+      16: {x:0.60, y:0.10},
+      23: {x:0.39, y:0.55}, 24: {x:0.61, y:0.55},
+    });
+    assert.equal(M.detectBlockPose(lm), false);
+  });
+
+  it('returns false when wrists are extended sideways beyond shoulder width', () => {
+    const lm = makeLm({
+      11: {x:0.35, y:0.28}, 12: {x:0.65, y:0.28},
+      15: {x:0.05, y:0.40},  // way outside the shoulder-width band
+      16: {x:0.95, y:0.40},
+      23: {x:0.39, y:0.55}, 24: {x:0.61, y:0.55},
+    });
+    assert.equal(M.detectBlockPose(lm), false);
+  });
+
+  it('returns false when both wrists are below the hips', () => {
+    const lm = makeLm({
+      11: {x:0.35, y:0.28}, 12: {x:0.65, y:0.28},
+      15: {x:0.40, y:0.70},  // below hipY 0.55
+      16: {x:0.60, y:0.70},
+      23: {x:0.39, y:0.55}, 24: {x:0.61, y:0.55},
+    });
+    assert.equal(M.detectBlockPose(lm), false);
+  });
+});
+
+// ─── computeSwingVector ──────────────────────────────────────
+
+describe('computeSwingVector', () => {
+  it('is a function', () => assert.ok(typeof M.computeSwingVector === 'function'));
+  it('returns null for null input',  () => assert.equal(M.computeSwingVector(null),  null));
+  it('returns null for empty array', () => assert.equal(M.computeSwingVector([]),    null));
+  it('returns null when fewer than 8 entries', () => {
+    const hist = Array.from({length: 7}, (_, i) => ({x: i * 0.01, y: 0}));
+    assert.equal(M.computeSwingVector(hist), null);
+  });
+
+  it('returns object with dx, dy, speed when hist is long enough', () => {
+    const hist = Array.from({length: 16}, (_, i) => ({x: i * 0.01, y: 0}));
+    const r = M.computeSwingVector(hist);
+    assert.ok(r !== null);
+    assert.ok('dx' in r && 'dy' in r && 'speed' in r);
+  });
+
+  it('slash ↘ — wrist moves camera-right+down → display_dx negative, dy positive', () => {
+    // MP x increases (camera-right = display-left) → display_dx = -mp_dx < 0
+    // dy increases (downward)
+    const hist = Array.from({length: 24}, (_, i) => ({
+      x: 0.2 + i * 0.01,  // increasing mp.x → display moves left
+      y: 0.3 + i * 0.01,  // increasing mp.y → moves down
+    }));
+    const r = M.computeSwingVector(hist);
+    assert.ok(r.dx < 0, `expected dx < 0, got ${r.dx}`);
+    assert.ok(r.dy > 0, `expected dy > 0, got ${r.dy}`);
+    assert.ok(r.speed > 0.05);
+  });
+
+  it('rise ↗ — wrist moves camera-left+up → display_dx positive, dy negative', () => {
+    const hist = Array.from({length: 24}, (_, i) => ({
+      x: 0.8 - i * 0.01,  // decreasing mp.x → display moves right
+      y: 0.7 - i * 0.01,  // decreasing mp.y → moves up
+    }));
+    const r = M.computeSwingVector(hist);
+    assert.ok(r.dx > 0, `expected dx > 0, got ${r.dx}`);
+    assert.ok(r.dy < 0, `expected dy < 0, got ${r.dy}`);
+    assert.ok(r.speed > 0.05);
+  });
+
+  it('stationary wrist returns near-zero speed', () => {
+    const hist = Array.from({length: 24}, () => ({x: 0.5, y: 0.5}));
+    const r = M.computeSwingVector(hist);
+    assert.ok(r.speed < 0.001, `expected speed ≈ 0, got ${r.speed}`);
+  });
+
+  it('speed equals hypot(dx, dy)', () => {
+    const hist = Array.from({length: 16}, (_, i) => ({x: i * 0.02, y: i * 0.02}));
+    const r = M.computeSwingVector(hist);
+    assert.ok(approx(r.speed, Math.hypot(r.dx, r.dy), 1e-9));
   });
 });

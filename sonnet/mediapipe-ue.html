@@ -2207,6 +2207,14 @@ Roll  = 0°  <span class="fc">// not derivable from direction alone</span>`;
     let handIsGripping  = false;
     let handFrameCount  = 0;      // frame-skip counter — Hands runs every 2nd frame
     let palmNormal3D    = null;   // {x,y,z} palm normal in hand world space (set by computeGripAndWeapon)
+    let handLostFrames  = 0;      // consecutive Hands frames with no detection
+    const HAND_HOLD_FRAMES = 6;   // hold last direction ~200 ms before clearing
+
+    // ── Gesture / action detection state (pose-only) ─────────
+    const WRIST_HIST_MAX = 24;  // ~800 ms at 30 fps
+    const wristHist      = [];  // [{x,y}] right-wrist MP normalised coords
+    let gestureAction    = null; // 'block' | 'slash' | 'rise' | null
+    let gestureFrames    = 0;    // countdown frames to keep label visible
 
     // Hand skeleton connections (21 landmarks)
     const HAND_CONN = [
@@ -2878,11 +2886,18 @@ Roll  = 0°  <span class="fc">// not derivable from direction alone</span>`;
       const handsWd = results.multiHandWorldLandmarks;
 
       if (!hands2d || hands2d.length === 0) {
-        liveHandLm = liveHandWorldLm = null;
-        handIsGripping = false;
-        weaponDir3D    = null;
+        handLostFrames++;
+        // Hold the last known direction for a short grace period so brief
+        // tracking drops don't snap the sword away and back.
+        if (handLostFrames > HAND_HOLD_FRAMES) {
+          liveHandLm = liveHandWorldLm = null;
+          handIsGripping = false;
+          weaponDir3D    = null;
+          palmNormal3D   = null;
+        }
         return;
       }
+      handLostFrames = 0;  // reset on successful detection
 
       // Pick the hand closest to the pose right-wrist (liveLm[16])
       let bestIdx = 0;
@@ -2932,11 +2947,7 @@ Roll  = 0°  <span class="fc">// not derivable from direction alone</span>`;
           // Flip y and z: hand world space → body space (y-up)
           const newDir = M.vec3normalize({ x: rawDir.x, y: -rawDir.y, z: -rawDir.z });
           if (!isNaN(newDir.x)) {
-            // Exponential smoothing: 80% old, 20% new — eliminates jitter
-            const S = 0.2;
-            weaponDir3D = weaponDir3D
-              ? M.vec3normalize(M.ema3(newDir, weaponDir3D, S))
-              : newDir;
+            weaponDir3D = newDir;
           }
           // Cache palm normal (body space) for updateWristRollFromHand.
           // Still derived from the full MCP plane — more accurate for roll.
@@ -2962,12 +2973,9 @@ Roll  = 0°  <span class="fc">// not derivable from direction alone</span>`;
           );
           if (pxW > 0.01) scale = wdW / pxW;
         }
-        const newDir = M.vec3normalize({ x: dx2d * scale, y: -dy2d * scale, z: 0 });
-        if (!isNaN(newDir.x)) {
-          const S = 0.2;
-          weaponDir3D = weaponDir3D
-            ? M.vec3normalize(M.ema3(newDir, weaponDir3D, S))
-            : newDir;
+        const newDir2d = M.vec3normalize({ x: dx2d * scale, y: -dy2d * scale, z: 0 });
+        if (!isNaN(newDir2d.x)) {
+          weaponDir3D = newDir2d;
         }
         palmNormal3D = null;
       }
@@ -3188,6 +3196,10 @@ Roll  = 0°  <span class="fc">// not derivable from direction alone</span>`;
       weaponDir3D    = null;
       palmNormal3D   = null;
       handFrameCount = 0;
+      handLostFrames = 0;
+      wristHist.length = 0;
+      gestureAction    = null;
+      gestureFrames    = 0;
 
       if (mpCameraObj) { try { mpCameraObj.stop(); } catch (_) {} mpCameraObj = null; }
       if (mpVideoEl && mpVideoEl.srcObject) {
@@ -3215,6 +3227,128 @@ Roll  = 0°  <span class="fc">// not derivable from direction alone</span>`;
     }
 
     // ── MediaPipe onResults callback ──────────────────────────
+    // ── Gesture detection (pose landmarks only) ──────────────
+    /**
+     * Detects three actions using only wrist/shoulder/hip pose landmarks.
+     * Updates gestureAction and gestureFrames.
+     *
+     * block — both wrists held near the chest.
+     * slash — right wrist swings from top-right to bottom-left (display space).
+     * rise  — right wrist swings from bottom-left to top-right (display space).
+     *
+     * All coordinates are MediaPipe normalised (x: 0=cam-left, 1=cam-right; y: 0=top, 1=bottom).
+     * Display is mirrored, so display_x = 1 - mp.x  →  display_dx = -mp_dx.
+     */
+    function detectGestureAction(lm) {
+      if (!lm || lm.length < 25) return;
+
+      const rWr = lm[16];
+      if (!rWr) return;
+
+      // ── Track right-wrist position ──────────────────────────
+      wristHist.push({ x: rWr.x, y: rWr.y });
+      if (wristHist.length > WRIST_HIST_MAX) wristHist.shift();
+
+      // ── Block: delegate to pure helper in mediapipe-ue.js ───
+      if (M.detectBlockPose(lm)) {
+        gestureAction = 'block';
+        gestureFrames = 6; // refreshed every frame while held
+        return;
+      }
+
+      // ── Swing: velocity-based, delegate to pure helper ──────
+      if (wristHist.length < WRIST_HIST_MAX) return;
+
+      const sv = M.computeSwingVector(wristHist);
+      if (!sv || sv.speed < 0.10) return; // too slow
+
+      const MC = 0.05; // minimum per-axis component to classify direction
+
+      // Display-right + down  →  slash ↘
+      if (sv.dx < -MC && sv.dy > MC && gestureAction !== 'slash') {
+        gestureAction = 'slash';
+        gestureFrames = 50;
+        wristHist.length = 0;
+      }
+      // Display-right + up  →  rise ↗
+      else if (sv.dx > MC && sv.dy < -MC && gestureAction !== 'rise') {
+        gestureAction = 'rise';
+        gestureFrames = 50;
+        wristHist.length = 0;
+      }
+    }
+
+    /**
+     * Draws the action badge + wrist trajectory trail on the webcam canvas.
+     * Must be called every frame (it decrements gestureFrames itself).
+     */
+    function drawActionOverlay(ctx, lm, W, H) {
+      // ── Wrist trajectory trail ─────────────────────────────
+      if (lm && wristHist.length > 1) {
+        const sx = p => (1 - p.x) * W;  // mirrored
+        const sy = p => p.y * H;
+        ctx.save();
+        ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        for (let i = 1; i < wristHist.length; i++) {
+          const a = wristHist[i - 1], b = wristHist[i];
+          const t = i / wristHist.length;           // 0 = oldest, 1 = newest
+          ctx.beginPath();
+          ctx.moveTo(sx(a), sy(a)); ctx.lineTo(sx(b), sy(b));
+          ctx.strokeStyle = `rgba(251,191,36,${t * 0.6})`;
+          ctx.lineWidth   = t * 3 + 1;
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      // ── Action badge ───────────────────────────────────────
+      if (gestureFrames > 0) gestureFrames--;
+      if (!gestureAction || gestureFrames <= 0) {
+        if (gestureFrames <= 0) gestureAction = null;
+        return;
+      }
+
+      const DEFS = {
+        block: { label: 'BLOCK',          icon: '🛡',  color: '#60a5fa', sub: 'both wrists at chest' },
+        slash: { label: 'ATTACK  ↘',      icon: '⚔',   color: '#f87171', sub: 'top-right → bottom-left' },
+        rise:  { label: 'ATTACK  ↗',      icon: '⚔',   color: '#fbbf24', sub: 'bottom-left → top-right' },
+      };
+      const def = DEFS[gestureAction];
+      if (!def) return;
+
+      const alpha = Math.min(1, gestureFrames / 12); // fade over last 12 frames
+      ctx.save();
+      ctx.globalAlpha = alpha;
+
+      // Background bar
+      ctx.font = 'bold 30px system-ui,sans-serif';
+      const tw  = ctx.measureText(`${def.icon}  ${def.label}`).width;
+      const bw  = tw + 32, bh = 50;
+      const bx  = (W - bw) / 2, by = 10;
+      ctx.fillStyle = 'rgba(0,0,0,0.60)';
+      ctx.beginPath();
+      ctx.rect(bx, by, bw, bh);
+      ctx.fill();
+
+      // Coloured left accent bar
+      ctx.fillStyle = def.color;
+      ctx.fillRect(bx, by, 4, bh);
+
+      // Main text
+      ctx.fillStyle = def.color;
+      ctx.textAlign = 'center';
+      ctx.fillText(`${def.icon}  ${def.label}`, W / 2, by + 34);
+
+      // Sub-label
+      ctx.font      = '11px system-ui,sans-serif';
+      ctx.fillStyle = 'rgba(210,210,210,0.85)';
+      ctx.fillText(def.sub, W / 2, by + bh + 14);
+
+      ctx.globalAlpha = 1;
+      ctx.textAlign   = 'left';
+      ctx.restore();
+    }
+
     function onPoseResults(results) {
       if (!cameraActive) return;
       const canvas = document.getElementById('rl-webcam');
@@ -3242,6 +3376,9 @@ Roll  = 0°  <span class="fc">// not derivable from direction alone</span>`;
         // Without this, the hand blinks because Hands only fires every 2nd frame while
         // onPoseResults clears and redraws the canvas on every frame.
         drawHandOverlay(ctx, liveHandLm, W, H);
+        // Gesture / action detection + HUD (pose only, no hand model needed)
+        detectGestureAction(liveLm);
+        drawActionOverlay(ctx, liveLm, W, H);
 
         if (liveWorldLm) {
           // Use MCP-based wrist roll when hand data is available (better than occluded pose lm[18/20])
@@ -3305,28 +3442,67 @@ Roll  = 0°  <span class="fc">// not derivable from direction alone</span>`;
         ctx.fillText(name, sx(p) + 6, sy(p) + 3);
       });
 
-      // Extra: highlight right wrist + finger landmarks used for twist
-      // lm[16]=R.Wrist, lm[18]=R.Pinky, lm[20]=R.Index
-      [[16,'R.Wr'],[18,'R.Pk'],[20,'R.Ix']].forEach(([i, label]) => {
+      // ── Pose hand-orientation landmarks: 16, 18, 20, 22 ──────
+      // 16 = R.Wrist · 18 = R.Pinky · 20 = R.Index · 22 = R.Thumb
+      const HAND_ORI = [
+        { i: 16, label: 'Wrist', color: '#60a5fa' },   // blue
+        { i: 18, label: 'Pinky', color: '#fb923c' },   // orange
+        { i: 20, label: 'Index', color: '#4ade80' },   // green
+        { i: 22, label: 'Thumb', color: '#e879f9' },   // fuchsia
+      ];
+
+      // Connecting lines between them (wrist→pinky, wrist→index, wrist→thumb)
+      ctx.save();
+      ctx.setLineDash([5, 3]);
+      ctx.lineWidth = 1.5;
+      [[16, 18], [16, 20], [16, 22]].forEach(([a, b]) => {
+        const pa = lm[a], pb = lm[b];
+        if (!pa || !pb || pa.visibility < 0.2 || pb.visibility < 0.2) return;
+        ctx.beginPath();
+        ctx.moveTo(sx(pa), sy(pa));
+        ctx.lineTo(sx(pb), sy(pb));
+        ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+        ctx.stroke();
+      });
+      ctx.setLineDash([]);
+      ctx.restore();
+
+      // Highlighted dots + labels
+      HAND_ORI.forEach(({ i, label, color }) => {
         const p = lm[i];
         if (!p || p.visibility < 0.2) return;
-        const reliableColor = (i === 16 && wristTwist.wrist_vis >= 0.35) ||
-                              (i === 18 && wristTwist.pinky_vis >= 0.35) ||
-                              (i === 20 && wristTwist.index_vis >= 0.35);
-        // Ring glow
+
+        // Outer glow ring
         ctx.beginPath();
-        ctx.arc(sx(p), sy(p), 9, 0, 2*Math.PI);
-        ctx.strokeStyle = reliableColor ? 'rgba(245,200,66,0.8)' : 'rgba(248,113,113,0.6)';
-        ctx.lineWidth = 1.5;
+        ctx.arc(sx(p), sy(p), 11, 0, 2 * Math.PI);
+        ctx.strokeStyle = color;
+        ctx.globalAlpha = 0.3;
+        ctx.lineWidth = 6;
         ctx.stroke();
-        // Label with twist angle for wrist
-        if (i === 16 && wristTwist.reliable) {
-          ctx.fillStyle = '#fbbf24';
-          ctx.font = 'bold 10px system-ui,sans-serif';
-          ctx.fillText(`Twist ${wristTwist.deg}°`, sx(p) + 10, sy(p) - 5);
-          ctx.font = '9px system-ui,sans-serif';
-        }
+        ctx.globalAlpha = 1;
+
+        // Solid dot
+        ctx.beginPath();
+        ctx.arc(sx(p), sy(p), 5, 0, 2 * Math.PI);
+        ctx.fillStyle = color;
+        ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+        ctx.lineWidth = 1.5;
+        ctx.fill(); ctx.stroke();
+
+        // Label: index number + name
+        ctx.font = 'bold 10px system-ui,sans-serif';
+        ctx.fillStyle = color;
+        ctx.fillText(`${i} ${label}`, sx(p) + 13, sy(p) + 4);
       });
+
+      // Twist angle near wrist (kept from before)
+      if (lm[16] && wristTwist.reliable) {
+        const p = lm[16];
+        ctx.fillStyle = '#fbbf24';
+        ctx.font = 'bold 10px system-ui,sans-serif';
+        ctx.fillText(`Twist ${wristTwist.deg}°`, sx(p) + 13, sy(p) - 8);
+      }
+      ctx.font = '9px system-ui,sans-serif';
     }
 
     // ── Convert MediaPipe world landmarks → body-space ────────

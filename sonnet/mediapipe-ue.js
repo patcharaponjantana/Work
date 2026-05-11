@@ -327,6 +327,38 @@
     return { x: x3, y: y3, z: z3 };
   }
 
+  // ── Direction smoothing helpers ───────────────────────────────────────────
+
+  /**
+   * Limit how much a direction vector can rotate between frames.
+   *
+   * Slerps `prev` toward `next` by at most `maxDeg` degrees.
+   * If the angle between them is already within the limit, `next` is returned
+   * unchanged.  This caps angular velocity so a single mis-detected frame
+   * cannot snap the sword to a completely different orientation.
+   *
+   * Both vectors must be unit length (or will be normalised internally).
+   *
+   * @param {{ x,y,z }} next    target direction this frame
+   * @param {{ x,y,z }} prev    smoothed direction from previous frame
+   * @param {number}    maxDeg  maximum allowed rotation per call (degrees)
+   * @returns {{ x,y,z }}  normalised direction
+   */
+  function clampAngularStep(next, prev, maxDeg) {
+    const n = vec3normalize(next);
+    const p = vec3normalize(prev);
+    const dot   = clamp(vec3dot(p, n), -1, 1);
+    const angle = Math.acos(dot);                 // radians, 0…π
+    const limit = maxDeg * (Math.PI / 180);
+    if (angle <= limit) return n;                 // already within budget
+    const t = limit / angle;                      // fraction of full rotation
+    return vec3normalize({
+      x: p.x + t * (n.x - p.x),
+      y: p.y + t * (n.y - p.y),
+      z: p.z + t * (n.z - p.z),
+    });
+  }
+
   // ── Hand landmark geometry (grip + weapon direction + wrist roll) ────────
 
   /**
@@ -452,6 +484,69 @@
     return Math.atan2(sinA, cosA) * (180 / Math.PI);
   }
 
+  // ── Pose-based combat-action helpers ─────────────────────────
+
+  /**
+   * detectBlockPose(lm) → boolean
+   *
+   * Returns true when both wrists are held in front of the chest:
+   *   • wrist y  >  (shoulder y − 0.04)  — not raised above shoulders
+   *   • wrist y  <  hip y                — not dropped below hips
+   *   • |wrist x − shoulder-centre x|   < shoulder-width  — not extended sideways
+   *
+   * All coordinates are MediaPipe normalised image-space (y increases downward).
+   * Landmarks used: 11 L-shoulder, 12 R-shoulder, 15 L-wrist, 16 R-wrist, 23 L-hip, 24 R-hip.
+   */
+  function detectBlockPose(lm) {
+    if (!lm || lm.length < 25) return false;
+    const lWr = lm[15], rWr = lm[16];
+    const lSh = lm[11], rSh = lm[12];
+    const lHp = lm[23], rHp = lm[24];
+    if (!lWr || !rWr || !lSh || !rSh || !lHp || !rHp) return false;
+
+    const shoulderY = (lSh.y + rSh.y) * 0.5;
+    const hipY      = (lHp.y + rHp.y) * 0.5;
+    const centerX   = (lSh.x + rSh.x) * 0.5;
+    const shW       = Math.abs(lSh.x - rSh.x);
+
+    const inChest = p =>
+      p.y > shoulderY - 0.04 && p.y < hipY &&
+      Math.abs(p.x - centerX) < shW * 1.1;
+
+    return inChest(lWr) && inChest(rWr);
+  }
+
+  /**
+   * computeSwingVector(hist) → {dx, dy, speed} | null
+   *
+   * Given a ring-buffer `hist` of {x, y} right-wrist positions (MediaPipe normalised,
+   * most-recent last), compares the first quarter against the last quarter to estimate
+   * a displacement vector.
+   *
+   * Returns null when hist is too short (< 8 entries).
+   * The returned dx/dy are in **display space** (mirrored: display_x = 1 − mp.x),
+   * so dx > 0 means the wrist is moving toward display-right.
+   */
+  function computeSwingVector(hist) {
+    if (!hist || hist.length < 8) return null;
+
+    const q   = Math.max(1, Math.floor(hist.length / 4));
+    const avg = (arr, k) => arr.reduce((s, p) => s + p[k], 0) / arr.length;
+
+    const oldPts = hist.slice(0, q);
+    const newPts = hist.slice(-q);
+
+    const mp_dx = avg(newPts, 'x') - avg(oldPts, 'x');
+    const mp_dy = avg(newPts, 'y') - avg(oldPts, 'y');
+
+    // Convert MP dx to display dx (mirrored display)
+    const dx    = -mp_dx;
+    const dy    = mp_dy;
+    const speed = Math.hypot(dx, dy);
+
+    return { dx, dy, speed };
+  }
+
   // ── Public API ────────────────────────────────────────────────
 
   const api = {
@@ -482,11 +577,16 @@
     detectGuard,
     detectDodge,
     detectCrouch,
+    // direction smoothing
+    clampAngularStep,
     // hand geometry (grip / weapon direction / wrist roll)
     computeMcpGrip,
     computeMcpWeaponDir,
     computeWeaponDirTwoPoint,
     computeWristRollAngleDeg,
+    // pose-only combat-action predicates
+    detectBlockPose,
+    computeSwingVector,
     // landmark index map (useful for consumers)
     LM,
   };
