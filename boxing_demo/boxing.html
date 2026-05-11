@@ -73,6 +73,12 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
   font-family:var(--mono);font-size:13px;font-weight:700;
   color:var(--accent);min-width:36px;text-align:right;white-space:nowrap;
 }
+.bio-btn{
+  border:1px solid var(--border);background:rgba(8,10,18,.35);color:var(--text);
+  border-radius:6px;padding:5px 8px;font:700 11px var(--font);cursor:pointer;
+}
+.bio-btn.on{border-color:var(--green);color:var(--green);box-shadow:0 0 10px rgba(74,222,128,.12)}
+.bio-status{font-family:var(--mono);font-size:11px;color:var(--muted);min-width:88px;text-align:right}
 .btn{
   padding:7px 16px;border-radius:7px;
   border:1px solid var(--border);background:var(--surface2);
@@ -212,6 +218,14 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
              min="1" max="20" step="1" value="1">
       <span class="mult-val" id="pos-mult-val">1×</span>
     </div>
+
+    <!-- Biomechanical depth toggle -->
+    <div class="mult-row">
+      <span class="mult-label">Bio Z</span>
+      <button class="bio-btn" id="bio-toggle" type="button">Off</button>
+      <button class="bio-btn" id="bio-calibrate" type="button">Calibrate</button>
+      <span class="bio-status" id="bio-status">not calibrated</span>
+    </div>
   </div>
 
 </div>
@@ -294,6 +308,14 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
   const REF_SHOULDER_W = 0.26;             // reference shoulder width in normalised coords
   const CHAR_SMOOTH    = 0.10;             // EMA factor — lower = smoother but laggier
 
+  // Biomechanical Z (foreshortening) for wrists + ankles
+  let biomechEnabled     = false;
+  let biomechCalibration = null;
+  const bioDepthSmooth   = { 15: 0, 16: 0, 27: 0, 28: 0 };
+  const BIO_SMOOTH       = 0.35;
+  const BIO_ARM_Z_SCALE  = 0.55;  // metres of forward wrist reach at full foreshortening
+  const BIO_LEG_Z_SCALE  = 0.75;  // metres of forward ankle reach at full foreshortening
+
   // FPS tracking
   let fpsCount = 0, fpsLast = 0;
 
@@ -356,6 +378,70 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
       pos[i] = { x: -p.x, y: -p.y, z: -p.z };  // negate X to mirror (match selfie camera)
     });
     return pos;
+  }
+
+  function updateBiomechUI() {
+    const toggle = document.getElementById('bio-toggle');
+    const status = document.getElementById('bio-status');
+    if (toggle) {
+      toggle.textContent = biomechEnabled ? 'On' : 'Off';
+      toggle.classList.toggle('on', biomechEnabled);
+    }
+    if (status) {
+      if (!biomechCalibration) status.textContent = 'not calibrated';
+      else status.textContent = biomechEnabled ? 'active' : 'calibrated';
+      status.style.color = biomechCalibration ? (biomechEnabled ? '#4ade80' : '#94a3b8') : '#f87171';
+    }
+  }
+
+  function calibrateBiomechFromLive() {
+    if (!liveLm) {
+      updateBiomechUI();
+      return false;
+    }
+    const calibration = BD.createBiomechCalibration(liveLm);
+    if (!calibration) {
+      updateBiomechUI();
+      return false;
+    }
+    biomechCalibration = calibration;
+    Object.keys(bioDepthSmooth).forEach(k => { bioDepthSmooth[k] = 0; });
+    updateBiomechUI();
+    return true;
+  }
+
+  function applyBiomechDepth(bodyPos, lm) {
+    if (!biomechEnabled || !biomechCalibration || !lm || !bodyPos) return bodyPos;
+
+    const depth = BD.estimateBiomechDepths(lm, biomechCalibration);
+    [15, 16, 27, 28].forEach(idx => {
+      bioDepthSmooth[idx] += BIO_SMOOTH * (depth[idx] - bioDepthSmooth[idx]);
+    });
+
+    // Apply positive forward Z to the limb chains. Shoulder/hip remain driven by
+    // MediaPipe world landmarks; only the distal limb depth is biomechanical.
+    if (bodyPos[11] && bodyPos[13] && bodyPos[15]) {
+      const z = bioDepthSmooth[15] * BIO_ARM_Z_SCALE;
+      bodyPos[13].z = bodyPos[11].z + z * 0.45;
+      bodyPos[15].z = bodyPos[11].z + z;
+    }
+    if (bodyPos[12] && bodyPos[14] && bodyPos[16]) {
+      const z = bioDepthSmooth[16] * BIO_ARM_Z_SCALE;
+      bodyPos[14].z = bodyPos[12].z + z * 0.45;
+      bodyPos[16].z = bodyPos[12].z + z;
+    }
+    if (bodyPos[23] && bodyPos[25] && bodyPos[27]) {
+      const z = bioDepthSmooth[27] * BIO_LEG_Z_SCALE;
+      bodyPos[25].z = bodyPos[23].z + z * 0.45;
+      bodyPos[27].z = bodyPos[23].z + z;
+    }
+    if (bodyPos[24] && bodyPos[26] && bodyPos[28]) {
+      const z = bioDepthSmooth[28] * BIO_LEG_Z_SCALE;
+      bodyPos[26].z = bodyPos[24].z + z * 0.45;
+      bodyPos[28].z = bodyPos[24].z + z;
+    }
+
+    return bodyPos;
   }
 
   // ── Webcam overlay ────────────────────────────────────────────────────────
@@ -858,6 +944,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     liveWorldLm = results.poseWorldLandmarks;
 
     const lm = liveLm;
+    if (biomechEnabled && !biomechCalibration) calibrateBiomechFromLive();
 
     // Smooth character world position (apply multiplier to raw values)
     const rawPos = computeCharPosition(lm);
@@ -932,7 +1019,10 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     updatePositionHUD();
 
     // 3D view
-    if (liveWorldLm) draw3D(worldLmToBodyPos(liveWorldLm));
+    if (liveWorldLm) {
+      const bodyPos = applyBiomechDepth(worldLmToBodyPos(liveWorldLm), lm);
+      draw3D(bodyPos);
+    }
   }
 
   // ── Camera start / stop ───────────────────────────────────────────────────
@@ -1057,6 +1147,24 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
         if (multVal) multVal.textContent = posMultiplier + '×';
       });
     }
+
+    const bioToggle = document.getElementById('bio-toggle');
+    const bioCalib  = document.getElementById('bio-calibrate');
+    if (bioToggle) {
+      bioToggle.addEventListener('click', () => {
+        biomechEnabled = !biomechEnabled;
+        if (biomechEnabled && !biomechCalibration) calibrateBiomechFromLive();
+        if (!biomechEnabled) Object.keys(bioDepthSmooth).forEach(k => { bioDepthSmooth[k] = 0; });
+        updateBiomechUI();
+      });
+    }
+    if (bioCalib) {
+      bioCalib.addEventListener('click', () => {
+        calibrateBiomechFromLive();
+        updateBiomechUI();
+      });
+    }
+    updateBiomechUI();
 
     window.addEventListener('resize', () => {
       if (!cameraActive) draw3D(worldLmToBodyPos(DEFAULT_WORLD_LM));

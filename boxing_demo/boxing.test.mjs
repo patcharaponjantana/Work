@@ -464,6 +464,77 @@ describe('classifyBoxingAction', () => {
   });
 });
 
+// ─── Biomechanical depth estimation ───────────────────────────────────────────
+
+describe('estimateForeshortenedDepth', () => {
+  it('returns 0 for invalid calibration', () => {
+    assert.equal(B.estimateForeshortenedDepth(0.1, 0), 0);
+    assert.equal(B.estimateForeshortenedDepth(0.1, -1), 0);
+  });
+
+  it('returns 0 when current length equals calibration length', () => {
+    assert.equal(B.estimateForeshortenedDepth(0.4, 0.4), 0);
+  });
+
+  it('returns 0 when current length is longer than calibration length', () => {
+    assert.equal(B.estimateForeshortenedDepth(0.5, 0.4), 0);
+  });
+
+  it('returns expected depth magnitude when limb is foreshortened', () => {
+    const depth = B.estimateForeshortenedDepth(0.3, 0.5);
+    assert.ok(Math.abs(depth - 0.8) < 1e-12);
+  });
+});
+
+describe('createBiomechCalibration', () => {
+  it('returns null for missing landmarks', () => {
+    assert.equal(B.createBiomechCalibration(null), null);
+    assert.equal(B.createBiomechCalibration(makeLm().slice(0, 10)), null);
+  });
+
+  it('captures positive baseline lengths for arms and legs', () => {
+    const calib = B.createBiomechCalibration(makeLm());
+    assert.ok(calib.leftArm > 0);
+    assert.ok(calib.rightArm > 0);
+    assert.ok(calib.leftLeg > 0);
+    assert.ok(calib.rightLeg > 0);
+  });
+});
+
+describe('estimateBiomechDepths', () => {
+  it('returns zero depths without calibration', () => {
+    assert.deepEqual(B.estimateBiomechDepths(makeLm(), null), { 15: 0, 16: 0, 27: 0, 28: 0 });
+  });
+
+  it('increases wrist depth when a calibrated arm appears shorter', () => {
+    const base = makeLm();
+    const calib = B.createBiomechCalibration(base);
+    const lm = makeLm({
+      15: {
+        x: base[11].x + (base[15].x - base[11].x) * 0.5,
+        y: base[11].y + (base[15].y - base[11].y) * 0.5,
+      },
+    });
+    const depths = B.estimateBiomechDepths(lm, calib);
+    assert.ok(depths[15] > 0.8);
+    assert.equal(depths[16], 0);
+  });
+
+  it('increases ankle depth when a calibrated leg appears shorter', () => {
+    const base = makeLm();
+    const calib = B.createBiomechCalibration(base);
+    const lm = makeLm({
+      28: {
+        x: base[24].x + (base[28].x - base[24].x) * 0.5,
+        y: base[24].y + (base[28].y - base[24].y) * 0.5,
+      },
+    });
+    const depths = B.estimateBiomechDepths(lm, calib);
+    assert.ok(depths[28] > 0.8);
+    assert.equal(depths[27], 0);
+  });
+});
+
 // ─── Exported constants ───────────────────────────────────────────────────────
 
 describe('exported constants', () => {

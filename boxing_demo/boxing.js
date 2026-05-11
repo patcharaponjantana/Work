@@ -148,6 +148,91 @@
     return swing != null && swing.speed > KICK_SPEED;
   }
 
+  // ── Biomechanical depth estimation ───────────────────────────────────────
+
+  /** Clamp a number between min and max. */
+  function clamp(v, min, max) {
+    return Math.max(min, Math.min(max, v));
+  }
+
+  /** 2D landmark distance in normalised image space. */
+  function dist2(a, b) {
+    if (!a || !b) return 0;
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  }
+
+  /**
+   * Estimate forward depth from foreshortening.
+   *
+   * If a limb has calibrated length L and currently appears as length l in 2D,
+   * then forward depth magnitude is sqrt(1 - (l/L)^2). This is a unitless
+   * extension ratio where 0 = limb parallel to image plane and 1 = fully toward
+   * the camera. Sign is intentionally not inferred here; callers decide whether
+   * the motion should count as forward.
+   *
+   * @param {number} apparentLength current 2D limb length
+   * @param {number} calibratedLength baseline 2D limb length
+   * @returns {number} 0..1 forward-depth magnitude
+   */
+  function estimateForeshortenedDepth(apparentLength, calibratedLength) {
+    if (!(calibratedLength > 1e-6) || !(apparentLength >= 0)) return 0;
+    const ratio = clamp(apparentLength / calibratedLength, 0, 1);
+    return Math.sqrt(Math.max(0, 1 - ratio * ratio));
+  }
+
+  /**
+   * Create a baseline calibration from the current pose.
+   * Best captured with arms/legs visible and extended in the image plane.
+   *
+   * @param {Array<{x,y,z}>} lm 33 pose landmarks
+   * @returns {{ leftArm:number, rightArm:number, leftLeg:number, rightLeg:number } | null}
+   */
+  function createBiomechCalibration(lm) {
+    if (!lm || lm.length < 29) return null;
+    const calib = {
+      leftArm:  dist2(lm[B.L_SHOULDER], lm[B.L_WRIST]),
+      rightArm: dist2(lm[B.R_SHOULDER], lm[B.R_WRIST]),
+      leftLeg:  dist2(lm[B.L_HIP],      lm[B.L_ANKLE]),
+      rightLeg: dist2(lm[B.R_HIP],      lm[B.R_ANKLE]),
+    };
+    if (!calib.leftArm || !calib.rightArm || !calib.leftLeg || !calib.rightLeg) return null;
+    return calib;
+  }
+
+  /**
+   * Estimate biomechanical forward depth for wrists and ankles.
+   *
+   * Returned values are unitless 0..1 magnitudes. In the demo these are scaled
+   * into metres and applied as positive forward Z for wrist/ankle landmarks.
+   *
+   * @param {Array<{x,y,z}>} lm
+   * @param {{ leftArm:number, rightArm:number, leftLeg:number, rightLeg:number }} calibration
+   * @returns {{ 15:number, 16:number, 27:number, 28:number }}
+   */
+  function estimateBiomechDepths(lm, calibration) {
+    const out = { 15: 0, 16: 0, 27: 0, 28: 0 };
+    if (!lm || lm.length < 29 || !calibration) return out;
+
+    out[B.L_WRIST] = estimateForeshortenedDepth(
+      dist2(lm[B.L_SHOULDER], lm[B.L_WRIST]),
+      calibration.leftArm
+    );
+    out[B.R_WRIST] = estimateForeshortenedDepth(
+      dist2(lm[B.R_SHOULDER], lm[B.R_WRIST]),
+      calibration.rightArm
+    );
+    out[B.L_ANKLE] = estimateForeshortenedDepth(
+      dist2(lm[B.L_HIP], lm[B.L_ANKLE]),
+      calibration.leftLeg
+    );
+    out[B.R_ANKLE] = estimateForeshortenedDepth(
+      dist2(lm[B.R_HIP], lm[B.R_ANKLE]),
+      calibration.rightLeg
+    );
+
+    return out;
+  }
+
   /**
    * Combined boxing action classifier.
    *
@@ -207,6 +292,9 @@
     detectBoxerCrouch,
     classifyPunchType,
     detectKick,
+    estimateForeshortenedDepth,
+    createBiomechCalibration,
+    estimateBiomechDepths,
     classifyBoxingAction,
   };
 
