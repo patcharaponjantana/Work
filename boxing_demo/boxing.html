@@ -321,7 +321,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
    * Derive the character's world-space translation from normalised image landmarks.
    *  x — lateral (hip centre offset from frame centre, mirrored)
    *  y — always 0 (avoids vertical drift from camera tilt)
-   *  z — depth proxy: larger shoulder-width → closer → negative Z (toward viewer)
+   *  z — depth proxy: larger shoulder-width → closer → positive Z (forward)
    */
   function computeCharPosition(lm) {
     if (!lm || lm.length < 25) return null;
@@ -519,7 +519,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     const axes = [
       { d: [ 1, 0, 0], neg: [-1, 0, 0], color: '#f87171', label: '+X', negLabel: '-X' },
       { d: [ 0, 1, 0], neg: [ 0,-1, 0], color: '#4ade80', label: '+Y', negLabel: '-Y' },
-      { d: [ 0, 0,-1], neg: [ 0, 0, 1], color: '#60a5fa', label: '+Z', negLabel: '-Z' },
+      { d: [ 0, 0, 1], neg: [ 0, 0,-1], color: '#60a5fa', label: '+Z', negLabel: '-Z' },
     ];
 
     // Draw negative stubs first (behind)
@@ -663,13 +663,11 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     ctx.clearRect(0, 0, W, H);
 
     // Orbit camera + perspective.
-    // charPos.z > 0 = FORWARD (toward camera).  To keep the orbit pivoting around the
-    // character, Z is added (not subtracted) so the world scrolls the correct direction.
-    // → project(body_local) keeps the skeleton centred (charPos cancels: added then subtracted).
-    // → projectWorld(world_pos) scrolls relative to charPos, so the floor moves correctly.
+    // Subtract charPos so the orbit pivots around the character. This keeps the
+    // skeleton centred while the fixed world grid scrolls underneath it.
     function projectXYZ(wx, wy, wz) {
-      const lx = wx - charPos.x;   // orbit pivot: subtract X
-      const lz = wz + charPos.z;   // orbit pivot: ADD Z (because +Z = toward camera = opposite sense)
+      const lx = wx - charPos.x;
+      const lz = wz - charPos.z;
       const ct = Math.cos(camTheta), st = Math.sin(camTheta);
       const rx  =  lx * ct + lz * st;
       const rz  = -lx * st + lz * ct;
@@ -680,10 +678,10 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
       return { sx: W / 2 + rx * scale, sy: H * 0.44 - ry * scale, sz: rz2 };
     }
 
-    // Body-local → world, then project.
-    // bp.z - charPos.z  inside → lz = (bp.z - charPos.z) + charPos.z = bp.z  ← charPos cancels ✓
+    // Body-local → world, then project. charPos cancels in projectXYZ, so the
+    // character stays centred while still occupying a world-space position.
     function project(bp) {
-      return projectXYZ(bp.x + charPos.x, bp.y, bp.z - charPos.z);
+      return projectXYZ(bp.x + charPos.x, bp.y, bp.z + charPos.z);
     }
 
     // World-space → project — grid at fixed world coords scrolls when charPos changes
@@ -697,8 +695,8 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     const GS     = 0.20;
     const GEXT   = 2.2;
     const gCount = Math.ceil(GEXT / GS);
-    const snapX  = Math.round( charPos.x / GS) * GS;   // X unchanged
-    const snapZ  = Math.round(-charPos.z / GS) * GS;   // negate: lz = wz+charPos.z, so centre = -charPos.z
+    const snapX  = Math.round(charPos.x / GS) * GS;
+    const snapZ  = Math.round(charPos.z / GS) * GS;
     for (let i = -gCount; i <= gCount; i++) {
       const wx = snapX + i * GS;
       const wz = snapZ + i * GS;
