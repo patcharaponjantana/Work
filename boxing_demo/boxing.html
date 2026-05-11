@@ -328,9 +328,9 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     const midHipX = (lm[23].x + lm[24].x) / 2;
     const shW     = Math.abs(lm[11].x - lm[12].x);
     return {
-      x: -(midHipX - 0.5) * 1.8,              // lateral (mirrored)
+      x: -(midHipX - 0.5) * 1.8,             // lateral (mirrored)
       y: 0,
-      z: -(shW / REF_SHOULDER_W - 1) * 0.9,   // depth: larger shW → closer → negative Z
+      z: (shW / REF_SHOULDER_W - 1) * 0.9,   // depth: larger shW → closer → positive Z (forward)
     };
   }
 
@@ -478,8 +478,8 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     const zEl = document.getElementById('pos-z');
     if (!xEl || !zEl) return;
 
-    const side = charPos.x;          // positive = display-right
-    const fwd  = -charPos.z;         // positive = toward camera (forward)
+    const side = charPos.x;   // positive = display-right
+    const fwd  = charPos.z;  // positive = forward (toward camera)
 
     xEl.textContent = (side >= 0 ? '+' : '') + side.toFixed(2) + 'm';
     zEl.textContent = (fwd  >= 0 ? '+' : '') + fwd.toFixed(2)  + 'm';
@@ -519,7 +519,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     const axes = [
       { d: [ 1, 0, 0], neg: [-1, 0, 0], color: '#f87171', label: '+X', negLabel: '-X' },
       { d: [ 0, 1, 0], neg: [ 0,-1, 0], color: '#4ade80', label: '+Y', negLabel: '-Y' },
-      { d: [ 0, 0, 1], neg: [ 0, 0,-1], color: '#60a5fa', label: '+Z', negLabel: '-Z' },
+      { d: [ 0, 0,-1], neg: [ 0, 0, 1], color: '#60a5fa', label: '+Z', negLabel: '-Z' },
     ];
 
     // Draw negative stubs first (behind)
@@ -619,10 +619,9 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     ctx.textBaseline = 'bottom';
     ctx.fillText('BACK', MX, RY + RS - 3);
 
-    // Character dot
-    // x: charPos.x > 0 = right, charPos.z < 0 = forward (toward camera = top)
-    const dotX = MX + (charPos.x / RANGE) * (RS / 2);
-    const dotY = MY + (charPos.z / RANGE) * (RS / 2);  // z<0 → moves up (FWD)
+    // Character dot — charPos.z > 0 = forward = top of radar (FWD label)
+    const dotX = MX + (charPos.x  / RANGE) * (RS / 2);
+    const dotY = MY - (charPos.z  / RANGE) * (RS / 2);  // z>0 → moves up (FWD)
     const dX   = Math.max(RX + 5, Math.min(RX + RS - 5, dotX));
     const dY   = Math.max(RY + 5, Math.min(RY + RS - 5, dotY));
 
@@ -664,12 +663,13 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     ctx.clearRect(0, 0, W, H);
 
     // Orbit camera + perspective.
-    // Subtracts charPos FIRST so the orbit always pivots around the character.
-    // → project(body_local) keeps the skeleton centered (charPos adds then cancels).
-    // → projectWorld(world_pos) shifts relative to charPos, making the grid scroll.
+    // charPos.z > 0 = FORWARD (toward camera).  To keep the orbit pivoting around the
+    // character, Z is added (not subtracted) so the world scrolls the correct direction.
+    // → project(body_local) keeps the skeleton centred (charPos cancels: added then subtracted).
+    // → projectWorld(world_pos) scrolls relative to charPos, so the floor moves correctly.
     function projectXYZ(wx, wy, wz) {
-      const lx = wx - charPos.x;  // translate so charPos is the orbit pivot
-      const lz = wz - charPos.z;
+      const lx = wx - charPos.x;   // orbit pivot: subtract X
+      const lz = wz + charPos.z;   // orbit pivot: ADD Z (because +Z = toward camera = opposite sense)
       const ct = Math.cos(camTheta), st = Math.sin(camTheta);
       const rx  =  lx * ct + lz * st;
       const rz  = -lx * st + lz * ct;
@@ -680,9 +680,10 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
       return { sx: W / 2 + rx * scale, sy: H * 0.44 - ry * scale, sz: rz2 };
     }
 
-    // Body-local → world (charPos added) → project (charPos subtracted inside) → net = body-local only
+    // Body-local → world, then project.
+    // bp.z - charPos.z  inside → lz = (bp.z - charPos.z) + charPos.z = bp.z  ← charPos cancels ✓
     function project(bp) {
-      return projectXYZ(bp.x + charPos.x, bp.y, bp.z + charPos.z);
+      return projectXYZ(bp.x + charPos.x, bp.y, bp.z - charPos.z);
     }
 
     // World-space → project — grid at fixed world coords scrolls when charPos changes
@@ -696,8 +697,8 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     const GS     = 0.20;
     const GEXT   = 2.2;
     const gCount = Math.ceil(GEXT / GS);
-    const snapX  = Math.round(charPos.x / GS) * GS;
-    const snapZ  = Math.round(charPos.z / GS) * GS;
+    const snapX  = Math.round( charPos.x / GS) * GS;   // X unchanged
+    const snapZ  = Math.round(-charPos.z / GS) * GS;   // negate: lz = wz+charPos.z, so centre = -charPos.z
     for (let i = -gCount; i <= gCount; i++) {
       const wx = snapX + i * GS;
       const wz = snapZ + i * GS;
@@ -789,6 +790,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
 
     // XYZ axis gizmo
     drawAxisGizmo(ctx, W, H);
+
   }
 
   // ── Action cards UI ───────────────────────────────────────────────────────
