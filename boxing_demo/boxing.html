@@ -345,7 +345,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     pos[PELVIS_IDX] = { x: 0, y: 0, z: 0 };
     if (worldLm[11] && worldLm[12]) {
       pos[MID_SHOULDER_IDX] = {
-        x:  (worldLm[11].x + worldLm[12].x) * 0.5,
+        x: -((worldLm[11].x + worldLm[12].x) * 0.5),  // negate X to mirror (match selfie camera)
         y: -((worldLm[11].y + worldLm[12].y) * 0.5),
         z: -((worldLm[11].z + worldLm[12].z) * 0.5),
       };
@@ -353,7 +353,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     [0, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28].forEach(i => {
       const p = worldLm[i];
       if (!p) return;
-      pos[i] = { x: p.x, y: -p.y, z: -p.z };
+      pos[i] = { x: -p.x, y: -p.y, z: -p.z };  // negate X to mirror (match selfie camera)
     });
     return pos;
   }
@@ -488,6 +488,89 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     const moving = Math.abs(side) > 0.05 || Math.abs(fwd) > 0.05;
     const chip = document.getElementById('pos-chip');
     if (chip) chip.style.opacity = moving ? '1' : '0.45';
+  }
+
+  // ── XYZ axis gizmo (top-right corner of the 3D canvas) ──────────────────
+  function drawAxisGizmo(ctx, W, H) {
+    const CX  = W - 52;   // gizmo centre X (top-right)
+    const CY  = 52;       // gizmo centre Y
+    const LEN = 36;       // arm length px
+    const ct = Math.cos(camTheta), st = Math.sin(camTheta);
+    const cp = Math.cos(camPhi),   sp = Math.sin(camPhi);
+
+    // Orthographic projection of a unit direction vector (no perspective)
+    function projDir(dx, dy, dz) {
+      const rx =  dx * ct + dz * st;
+      const rz = -dx * st + dz * ct;
+      const ry =  dy * cp - rz * sp;
+      return { sx: CX + rx * LEN, sy: CY - ry * LEN };
+    }
+
+    // Background disc
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(CX, CY, LEN + 14, 0, 2 * Math.PI);
+    ctx.fillStyle = 'rgba(8,10,18,0.70)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(91,156,246,0.25)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    const axes = [
+      { d: [ 1, 0, 0], neg: [-1, 0, 0], color: '#f87171', label: '+X', negLabel: '-X' },
+      { d: [ 0, 1, 0], neg: [ 0,-1, 0], color: '#4ade80', label: '+Y', negLabel: '-Y' },
+      { d: [ 0, 0, 1], neg: [ 0, 0,-1], color: '#60a5fa', label: '+Z', negLabel: '-Z' },
+    ];
+
+    // Draw negative stubs first (behind)
+    axes.forEach(({ neg, color }) => {
+      const t = projDir(...neg);
+      ctx.strokeStyle = color + '40';  // 25% opacity
+      ctx.lineWidth   = 1.5;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(CX, CY);
+      ctx.lineTo(t.sx, t.sy);
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+
+    // Sort axes back-to-front so forward axes draw on top
+    const sorted = axes
+      .map(a => ({ ...a, tip: projDir(...a.d), depth: projDir(...a.d).sy }))
+      .sort((a, b) => b.depth - a.depth);  // larger sy = further back, draw first
+
+    sorted.forEach(({ d, color, label, tip }) => {
+      const angle = Math.atan2(tip.sy - CY, tip.sx - CX);
+
+      // Shaft
+      ctx.strokeStyle = color;
+      ctx.lineWidth   = 2.2;
+      ctx.beginPath();
+      ctx.moveTo(CX, CY);
+      ctx.lineTo(tip.sx, tip.sy);
+      ctx.stroke();
+
+      // Arrowhead
+      const AR = 6;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(tip.sx, tip.sy);
+      ctx.lineTo(tip.sx - AR * Math.cos(angle - 0.45), tip.sy - AR * Math.sin(angle - 0.45));
+      ctx.lineTo(tip.sx - AR * Math.cos(angle + 0.45), tip.sy - AR * Math.sin(angle + 0.45));
+      ctx.closePath();
+      ctx.fill();
+
+      // Label outside the arrowhead
+      const LOFF = 11;
+      ctx.fillStyle    = color;
+      ctx.font         = 'bold 10px system-ui,sans-serif';
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, tip.sx + LOFF * Math.cos(angle), tip.sy + LOFF * Math.sin(angle));
+    });
+
+    ctx.restore();
   }
 
   // ── Top-down radar (inset on the 3D canvas) ───────────────────────────────
@@ -703,6 +786,9 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
 
     // Top-down position radar
     drawRadar(ctx, W, H);
+
+    // XYZ axis gizmo
+    drawAxisGizmo(ctx, W, H);
   }
 
   // ── Action cards UI ───────────────────────────────────────────────────────
