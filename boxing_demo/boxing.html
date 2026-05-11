@@ -48,6 +48,31 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
   border-radius:6px;padding:4px 10px;
   font-size:11px;font-family:var(--mono);color:var(--dim);white-space:nowrap;
 }
+.pos-chip{
+  background:var(--surface2);border:1px solid var(--border);
+  border-radius:6px;padding:4px 11px;
+  font-size:11px;font-family:var(--mono);
+  display:flex;align-items:center;gap:8px;white-space:nowrap;
+}
+.pos-axis{display:flex;align-items:center;gap:4px}
+.pos-label{color:var(--dim);font-size:9px;letter-spacing:.07em;text-transform:uppercase}
+.pos-val{font-weight:700;font-size:13px;min-width:44px;text-align:right;transition:color 80ms}
+.pos-val.pos-side{color:var(--cyan)}
+.pos-val.pos-fwd{color:var(--green)}
+.pos-sep{color:var(--border)}
+
+/* ── Movement multiplier control ── */
+.mult-row{
+  display:flex;align-items:center;gap:10px;padding:8px 12px;
+  background:var(--surface);border:1px solid var(--border);border-radius:8px;
+  flex-shrink:0;
+}
+.mult-label{font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
+.mult-slider{flex:1;accent-color:var(--accent);cursor:pointer;min-width:60px}
+.mult-val{
+  font-family:var(--mono);font-size:13px;font-weight:700;
+  color:var(--accent);min-width:36px;text-align:right;white-space:nowrap;
+}
 .btn{
   padding:7px 16px;border-radius:7px;
   border:1px solid var(--border);background:var(--surface2);
@@ -142,6 +167,17 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     <div class="stat-chip s-dodge">  <span class="sv" id="stat-dodge">0</span>Dodges</div>
   </div>
   <div class="hdr-spacer"></div>
+  <div class="pos-chip" id="pos-chip" title="Character world position">
+    <div class="pos-axis">
+      <span class="pos-label">side</span>
+      <span class="pos-val pos-side" id="pos-x">+0.00m</span>
+    </div>
+    <span class="pos-sep">|</span>
+    <div class="pos-axis">
+      <span class="pos-label">fwd</span>
+      <span class="pos-val pos-fwd" id="pos-z">+0.00m</span>
+    </div>
+  </div>
   <div class="fps-chip" id="fps-chip">— fps</div>
   <button class="btn" id="start-btn">Start Camera</button>
 </header>
@@ -168,6 +204,14 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
       <span class="skel-hint">Drag to orbit · Scroll to zoom</span>
     </div>
     <div class="action-grid" id="action-grid"></div>
+
+    <!-- Movement multiplier -->
+    <div class="mult-row">
+      <span class="mult-label">Move ×</span>
+      <input type="range" id="pos-mult" class="mult-slider"
+             min="1" max="20" step="1" value="1">
+      <span class="mult-val" id="pos-mult-val">1×</span>
+    </div>
   </div>
 
 </div>
@@ -244,6 +288,12 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
   let camTheta = 0.3, camPhi = -0.15, camDist = 2.5;
   let isDragging = false, lastMouse = { x: 0, y: 0 };
 
+  // Character world-space translation (smoothed, updated each frame)
+  let charPos      = { x: 0, y: 0, z: 0 };
+  let posMultiplier = 1;                    // user-adjustable scale factor
+  const REF_SHOULDER_W = 0.26;             // reference shoulder width in normalised coords
+  const CHAR_SMOOTH    = 0.10;             // EMA factor — lower = smoother but laggier
+
   // FPS tracking
   let fpsCount = 0, fpsLast = 0;
 
@@ -266,6 +316,24 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
   });
 
   // ── Helpers ───────────────────────────────────────────────────────────────
+
+  /**
+   * Derive the character's world-space translation from normalised image landmarks.
+   *  x — lateral (hip centre offset from frame centre, mirrored)
+   *  y — always 0 (avoids vertical drift from camera tilt)
+   *  z — depth proxy: larger shoulder-width → closer → negative Z (toward viewer)
+   */
+  function computeCharPosition(lm) {
+    if (!lm || lm.length < 25) return null;
+    const midHipX = (lm[23].x + lm[24].x) / 2;
+    const shW     = Math.abs(lm[11].x - lm[12].x);
+    return {
+      x: -(midHipX - 0.5) * 1.8,              // lateral (mirrored)
+      y: 0,
+      z: -(shW / REF_SHOULDER_W - 1) * 0.9,   // depth: larger shW → closer → negative Z
+    };
+  }
+
   function pushHist(hist, pt) {
     hist.push(pt);
     if (hist.length > HIST_MAX) hist.shift();
@@ -404,6 +472,96 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
   // Key joint accent colours (highlighted in 3D view)
   const JOINT_ACCENT = { 15: '#38bdf8', 16: '#f87171', 27: '#4ade80', 28: '#a78bfa' };
 
+  // ── Position HUD (header chip) ────────────────────────────────────────────
+  function updatePositionHUD() {
+    const xEl = document.getElementById('pos-x');
+    const zEl = document.getElementById('pos-z');
+    if (!xEl || !zEl) return;
+
+    const side = charPos.x;          // positive = display-right
+    const fwd  = -charPos.z;         // positive = toward camera (forward)
+
+    xEl.textContent = (side >= 0 ? '+' : '') + side.toFixed(2) + 'm';
+    zEl.textContent = (fwd  >= 0 ? '+' : '') + fwd.toFixed(2)  + 'm';
+
+    // Dim the chip when values are near zero (idle)
+    const moving = Math.abs(side) > 0.05 || Math.abs(fwd) > 0.05;
+    const chip = document.getElementById('pos-chip');
+    if (chip) chip.style.opacity = moving ? '1' : '0.45';
+  }
+
+  // ── Top-down radar (inset on the 3D canvas) ───────────────────────────────
+  function drawRadar(ctx, W, H) {
+    const RS  = 90;   // radar square size in CSS pixels
+    const PAD = 10;
+    const RX  = PAD;
+    const RY  = H - RS - PAD;
+    const MX  = RX + RS / 2;   // radar centre X
+    const MY  = RY + RS / 2;   // radar centre Y
+    const RANGE = 1.5;          // ±1.5 m shown
+
+    ctx.save();
+
+    // Background + border
+    ctx.fillStyle   = 'rgba(8,10,18,0.82)';
+    ctx.strokeStyle = 'rgba(91,156,246,0.40)';
+    ctx.lineWidth   = 1;
+    ctx.fillRect(RX, RY, RS, RS);
+    ctx.strokeRect(RX, RY, RS, RS);
+
+    // Concentric range rings at 0.5 m and 1.0 m
+    ctx.strokeStyle = 'rgba(91,156,246,0.15)';
+    ctx.lineWidth   = 0.5;
+    [0.5, 1.0].forEach(r => {
+      const pr = (r / RANGE) * (RS / 2);
+      ctx.beginPath(); ctx.arc(MX, MY, pr, 0, 2 * Math.PI); ctx.stroke();
+    });
+
+    // Cross-hair
+    ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+    ctx.lineWidth   = 0.5;
+    ctx.beginPath(); ctx.moveTo(MX, RY + 4); ctx.lineTo(MX, RY + RS - 4); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(RX + 4, MY); ctx.lineTo(RX + RS - 4, MY); ctx.stroke();
+
+    // "FWD" label (toward camera = top of radar)
+    ctx.fillStyle    = 'rgba(74,222,128,0.65)';
+    ctx.font         = 'bold 8px system-ui,sans-serif';
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText('FWD', MX, RY + 3);
+
+    // "BACK" label at bottom
+    ctx.fillStyle    = 'rgba(125,140,160,0.40)';
+    ctx.font         = '8px system-ui,sans-serif';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText('BACK', MX, RY + RS - 3);
+
+    // Character dot
+    // x: charPos.x > 0 = right, charPos.z < 0 = forward (toward camera = top)
+    const dotX = MX + (charPos.x / RANGE) * (RS / 2);
+    const dotY = MY + (charPos.z / RANGE) * (RS / 2);  // z<0 → moves up (FWD)
+    const dX   = Math.max(RX + 5, Math.min(RX + RS - 5, dotX));
+    const dY   = Math.max(RY + 5, Math.min(RY + RS - 5, dotY));
+
+    // Glow ring
+    ctx.beginPath(); ctx.arc(dX, dY, 7, 0, 2 * Math.PI);
+    ctx.fillStyle = 'rgba(248,113,113,0.20)'; ctx.fill();
+    // Dot
+    ctx.beginPath(); ctx.arc(dX, dY, 4, 0, 2 * Math.PI);
+    ctx.fillStyle   = '#f87171';
+    ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 1;
+    ctx.fill(); ctx.stroke();
+
+    // Title
+    ctx.fillStyle    = 'rgba(125,140,160,0.55)';
+    ctx.font         = '8px system-ui,sans-serif';
+    ctx.textAlign    = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText('TOP VIEW', RX + 3, RY + 3);
+
+    ctx.restore();
+  }
+
   // ── 3D renderer ───────────────────────────────────────────────────────────
   function draw3D(fkPos) {
     const canvas = document.getElementById('skel3d');
@@ -422,27 +580,54 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     }
     ctx.clearRect(0, 0, W, H);
 
-    function project(bp) {
+    // Orbit camera + perspective.
+    // Subtracts charPos FIRST so the orbit always pivots around the character.
+    // → project(body_local) keeps the skeleton centered (charPos adds then cancels).
+    // → projectWorld(world_pos) shifts relative to charPos, making the grid scroll.
+    function projectXYZ(wx, wy, wz) {
+      const lx = wx - charPos.x;  // translate so charPos is the orbit pivot
+      const lz = wz - charPos.z;
       const ct = Math.cos(camTheta), st = Math.sin(camTheta);
-      const rx  =  bp.x * ct + bp.z * st;
-      const rz  = -bp.x * st + bp.z * ct;
-      const cp  = Math.cos(camPhi), sp = Math.sin(camPhi);
-      const ry  =  bp.y * cp - rz * sp;
-      const rz2 =  bp.y * sp + rz * cp;
+      const rx  =  lx * ct + lz * st;
+      const rz  = -lx * st + lz * ct;
+      const cp2 = Math.cos(camPhi), sp = Math.sin(camPhi);
+      const ry  =  wy * cp2 - rz * sp;
+      const rz2 =  wy * sp  + rz * cp2;
       const scale = (W * 0.42 * 1.6) / (camDist + rz2 + 0.001);
       return { sx: W / 2 + rx * scale, sy: H * 0.44 - ry * scale, sz: rz2 };
     }
 
-    // Floor grid
+    // Body-local → world (charPos added) → project (charPos subtracted inside) → net = body-local only
+    function project(bp) {
+      return projectXYZ(bp.x + charPos.x, bp.y, bp.z + charPos.z);
+    }
+
+    // World-space → project — grid at fixed world coords scrolls when charPos changes
+    function projectWorld(wp) {
+      return projectXYZ(wp.x, wp.y, wp.z);
+    }
+
+    // Floor grid — fixed world-space tile that scrolls as character moves.
+    // Snap grid origin to GS increments so lines tile seamlessly.
     ctx.save();
-    ctx.strokeStyle = 'rgba(255,255,255,0.05)';
-    ctx.lineWidth   = 1;
-    const GS = 0.15;
-    for (let i = -4; i <= 4; i++) {
-      const ga = project({ x: i*GS, y: -0.56, z: -0.65 });
-      const gb = project({ x: i*GS, y: -0.56, z:  0.65 });
-      const gc = project({ x: -0.65, y: -0.56, z: i*GS });
-      const gd = project({ x:  0.65, y: -0.56, z: i*GS });
+    const GS     = 0.20;
+    const GEXT   = 2.2;
+    const gCount = Math.ceil(GEXT / GS);
+    const snapX  = Math.round(charPos.x / GS) * GS;
+    const snapZ  = Math.round(charPos.z / GS) * GS;
+    for (let i = -gCount; i <= gCount; i++) {
+      const wx = snapX + i * GS;
+      const wz = snapZ + i * GS;
+      const ga = projectWorld({ x: wx,    y: -0.56, z: snapZ - GEXT });
+      const gb = projectWorld({ x: wx,    y: -0.56, z: snapZ + GEXT });
+      const gc = projectWorld({ x: snapX - GEXT, y: -0.56, z: wz });
+      const gd = projectWorld({ x: snapX + GEXT, y: -0.56, z: wz });
+
+      const distFromCentre = Math.abs(i) / gCount;
+      const alpha = Math.max(0.07, 0.35 * (1 - distFromCentre * 0.7));
+      ctx.strokeStyle = `rgba(91,156,246,${alpha.toFixed(2)})`;
+      ctx.lineWidth   = 1.2;
+
       ctx.beginPath(); ctx.moveTo(ga.sx, ga.sy); ctx.lineTo(gb.sx, gb.sy); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(gc.sx, gc.sy); ctx.lineTo(gd.sx, gd.sy); ctx.stroke();
     }
@@ -515,6 +700,9 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
         ctx.restore();
       }
     }
+
+    // Top-down position radar
+    drawRadar(ctx, W, H);
   }
 
   // ── Action cards UI ───────────────────────────────────────────────────────
@@ -585,6 +773,13 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
 
     const lm = liveLm;
 
+    // Smooth character world position (apply multiplier to raw values)
+    const rawPos = computeCharPosition(lm);
+    if (rawPos) {
+      charPos.x += CHAR_SMOOTH * (rawPos.x * posMultiplier - charPos.x);
+      charPos.z += CHAR_SMOOTH * (rawPos.z * posMultiplier - charPos.z);
+    }
+
     // Update per-limb ring buffers
     pushHist(histLW, { x: lm[15].x, y: lm[15].y });
     pushHist(histRW, { x: lm[16].x, y: lm[16].y });
@@ -646,8 +841,9 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
       drawActionBadge(ctx, currentAction.action, currentAction.limb, actionHoldFrames, W, H);
     }
 
-    // Update card UI
+    // Update card UI and position HUD
     updateActionCards(currentAction.action);
+    updatePositionHUD();
 
     // 3D view
     if (liveWorldLm) draw3D(worldLmToBodyPos(liveWorldLm));
@@ -665,6 +861,8 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
       btn.textContent = 'Start Camera';
       btn.classList.remove('on');
       if (ph) ph.style.display = '';
+      charPos = { x: 0, y: 0, z: 0 };  // reset position when camera stops
+      updatePositionHUD();
       draw3D(worldLmToBodyPos(DEFAULT_WORLD_LM));
       return;
     }
@@ -763,6 +961,17 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     initOrbitControls();
     draw3D(worldLmToBodyPos(DEFAULT_WORLD_LM));
     document.getElementById('start-btn').addEventListener('click', toggleCamera);
+
+    // Multiplier slider
+    const multSlider = document.getElementById('pos-mult');
+    const multVal    = document.getElementById('pos-mult-val');
+    if (multSlider) {
+      multSlider.addEventListener('input', () => {
+        posMultiplier = parseFloat(multSlider.value);
+        if (multVal) multVal.textContent = posMultiplier + '×';
+      });
+    }
+
     window.addEventListener('resize', () => {
       if (!cameraActive) draw3D(worldLmToBodyPos(DEFAULT_WORLD_LM));
     });
