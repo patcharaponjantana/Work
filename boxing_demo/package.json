@@ -1,0 +1,9 @@
+{
+  "name": "boxing-demo",
+  "private": true,
+  "version": "1.0.0",
+  "description": "MediaPipe Pose boxing gesture demo",
+  "scripts": {
+    "test": "node --test boxing.test.mjs"
+  }
+}

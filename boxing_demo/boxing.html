@@ -1,0 +1,780 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Boxing Demo — MediaPipe Pose</title>
+<script src="../sonnet/mediapipe-ue.js"></script>
+<script src="boxing.js"></script>
+<script async src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"            crossorigin="anonymous"></script>
+<script async src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script async src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0d0f17;--surface:#13161f;--surface2:#1a1e2e;--surface3:#202538;
+  --border:#252a3d;--text:#dde4f0;--muted:#7b879e;--dim:#4a5268;
+  --accent:#5b9cf6;--accent-dim:rgba(91,156,246,.14);
+  --green:#4ade80;--amber:#fbbf24;--red:#f87171;--purple:#a78bfa;
+  --orange:#fb923c;--cyan:#38bdf8;--sky:#7dd3fc;
+  --font:system-ui,-apple-system,'Segoe UI',sans-serif;
+  --mono:ui-monospace,'Cascadia Code','Fira Code',monospace;
+}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--font);font-size:15px;line-height:1.55;overflow:hidden}
+
+/* ── Header ── */
+.hdr{
+  position:sticky;top:0;z-index:20;
+  height:54px;padding:0 20px;
+  background:var(--surface);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:16px;flex-wrap:nowrap;
+}
+.hdr-title{font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
+.hdr-spacer{flex:1}
+.stat-row{display:flex;gap:10px;align-items:center;flex-wrap:nowrap}
+.stat-chip{
+  background:var(--surface2);border:1px solid var(--border);
+  border-radius:6px;padding:4px 10px;
+  font-size:12px;font-family:var(--mono);color:var(--muted);
+  display:flex;gap:6px;align-items:center;white-space:nowrap;
+}
+.stat-chip .sv{font-weight:700;font-size:14px;color:var(--accent);min-width:22px;text-align:center}
+.stat-chip.s-punch-l .sv{color:var(--cyan)}
+.stat-chip.s-punch-r .sv{color:var(--red)}
+.stat-chip.s-kick    .sv{color:var(--purple)}
+.stat-chip.s-dodge   .sv{color:var(--amber)}
+.fps-chip{
+  background:var(--surface2);border:1px solid var(--border);
+  border-radius:6px;padding:4px 10px;
+  font-size:11px;font-family:var(--mono);color:var(--dim);white-space:nowrap;
+}
+.btn{
+  padding:7px 16px;border-radius:7px;
+  border:1px solid var(--border);background:var(--surface2);
+  color:var(--text);font:inherit;font-size:13px;cursor:pointer;
+  transition:background 100ms,border-color 100ms;white-space:nowrap;
+}
+.btn:hover{background:rgba(255,255,255,.07);border-color:rgba(255,255,255,.15)}
+.btn.on{border-color:var(--red);background:rgba(248,113,113,.1);color:var(--red)}
+
+/* ── Main layout ── */
+.main{
+  display:grid;
+  grid-template-columns:640px 1fr;
+  height:calc(100vh - 54px);
+  overflow:hidden;
+}
+@media(max-width:1100px){
+  .main{grid-template-columns:1fr;grid-template-rows:auto 1fr;overflow-y:auto;height:auto}
+  html,body{overflow:auto}
+}
+
+/* ── Left column — webcam ── */
+.cam-col{position:relative;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center}
+#cam-canvas{display:block;width:100%;max-width:640px;height:auto;background:#000}
+.cam-placeholder{
+  position:absolute;inset:0;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;
+  color:var(--muted);font-size:14px;pointer-events:none;
+}
+.cam-placeholder svg{opacity:.3}
+.fps-label{
+  position:absolute;bottom:10px;right:12px;
+  font-size:11px;font-family:var(--mono);color:rgba(255,255,255,.4);
+  background:rgba(0,0,0,.5);border-radius:4px;padding:2px 8px;
+  pointer-events:none;
+}
+
+/* ── Right column ── */
+.right-col{display:flex;flex-direction:column;overflow:hidden;padding:14px;gap:12px;background:var(--bg)}
+
+/* ── 3D skeleton canvas ── */
+.skel-wrap{
+  position:relative;flex:1;min-height:260px;
+  border:1px solid var(--border);border-radius:10px;
+  background:color-mix(in srgb,var(--surface2) 70%,#000);
+  overflow:hidden;user-select:none;
+}
+#skel3d{display:block;width:100%;height:100%;cursor:grab}
+#skel3d:active{cursor:grabbing}
+.skel-hint{
+  position:absolute;bottom:8px;left:50%;transform:translateX(-50%);
+  font-size:11px;color:var(--muted);background:rgba(0,0,0,.45);
+  padding:3px 10px;border-radius:4px;pointer-events:none;white-space:nowrap;
+}
+
+/* ── Action cards grid ── */
+.action-grid{
+  display:grid;
+  grid-template-columns:repeat(4,1fr);
+  gap:8px;
+}
+@media(max-width:600px){.action-grid{grid-template-columns:repeat(2,1fr)}}
+.action-card{
+  background:var(--surface);border:1.5px solid var(--border);
+  border-radius:9px;padding:10px 12px;
+  display:flex;align-items:center;gap:9px;
+  transition:border-color 180ms,background 180ms;
+  cursor:default;
+}
+.action-card.active{
+  border-color:var(--card-color, var(--accent));
+  background:color-mix(in srgb, var(--card-color, var(--accent)) 10%, transparent);
+}
+.ac-dot{
+  width:9px;height:9px;border-radius:50%;flex-shrink:0;
+  background:var(--card-color, var(--dim));
+  opacity:0.4;transition:opacity 180ms,box-shadow 180ms;
+}
+.action-card.active .ac-dot{opacity:1;box-shadow:0 0 7px var(--card-color, var(--accent))}
+.ac-name{font-size:12px;font-weight:700;letter-spacing:.04em;color:var(--muted);transition:color 180ms}
+.action-card.active .ac-name{color:var(--text)}
+</style>
+</head>
+<body>
+
+<header class="hdr">
+  <span class="hdr-title">Boxing Demo</span>
+  <div class="stat-row">
+    <div class="stat-chip s-punch-l"><span class="sv" id="stat-punch-l">0</span>Jabs L</div>
+    <div class="stat-chip s-punch-r"><span class="sv" id="stat-punch-r">0</span>Jabs R</div>
+    <div class="stat-chip s-kick">   <span class="sv" id="stat-kick">0</span>Kicks</div>
+    <div class="stat-chip s-dodge">  <span class="sv" id="stat-dodge">0</span>Dodges</div>
+  </div>
+  <div class="hdr-spacer"></div>
+  <div class="fps-chip" id="fps-chip">— fps</div>
+  <button class="btn" id="start-btn">Start Camera</button>
+</header>
+
+<div class="main">
+
+  <!-- ── Left: webcam canvas ── -->
+  <div class="cam-col">
+    <canvas id="cam-canvas" width="640" height="480"></canvas>
+    <div class="cam-placeholder" id="cam-placeholder">
+      <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <circle cx="12" cy="8"  r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
+        <path d="M9 4.5C7 3 4.5 3 3 5s-.5 5 2 6"/><path d="M15 4.5C17 3 19.5 3 21 5s.5 5-2 6"/>
+      </svg>
+      <span>Click <strong>Start Camera</strong> to begin</span>
+    </div>
+    <div class="fps-label" id="fps-label"></div>
+  </div>
+
+  <!-- ── Right: 3D + action cards ── -->
+  <div class="right-col">
+    <div class="skel-wrap">
+      <canvas id="skel3d"></canvas>
+      <span class="skel-hint">Drag to orbit · Scroll to zoom</span>
+    </div>
+    <div class="action-grid" id="action-grid"></div>
+  </div>
+
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  const M  = MpUE;          // mediapipe-ue.js helpers
+  const BD = BoxingDetector; // boxing.js helpers
+
+  // ── FK bone constants ─────────────────────────────────────────────────────
+  const PELVIS_IDX       = 100;
+  const MID_SHOULDER_IDX = 101;
+
+  const FK_BONES = [
+    { id: 'spine',   parent: PELVIS_IDX,       child: MID_SHOULDER_IDX },
+    { id: 'neck',    parent: MID_SHOULDER_IDX, child: 0   },
+    { id: 'l_clav',  parent: MID_SHOULDER_IDX, child: 11  },
+    { id: 'r_clav',  parent: MID_SHOULDER_IDX, child: 12  },
+    { id: 'l_uarm',  parent: 11, child: 13 },
+    { id: 'l_farm',  parent: 13, child: 15 },
+    { id: 'r_uarm',  parent: 12, child: 14 },
+    { id: 'r_farm',  parent: 14, child: 16 },
+    { id: 'l_hip',   parent: PELVIS_IDX, child: 23 },
+    { id: 'r_hip',   parent: PELVIS_IDX, child: 24 },
+    { id: 'l_thigh', parent: 23, child: 25 },
+    { id: 'r_thigh', parent: 24, child: 26 },
+    { id: 'l_shin',  parent: 25, child: 27 },
+    { id: 'r_shin',  parent: 26, child: 28 },
+  ];
+
+  const MP_POSE_CONN = [
+    [0,1],[1,2],[2,3],[3,7],[0,4],[4,5],[5,6],[6,8],[9,10],
+    [11,12],[11,13],[13,15],[12,14],[14,16],
+    [11,23],[12,24],[23,24],
+    [23,25],[25,27],[24,26],[26,28],
+    [27,29],[29,31],[28,30],[30,32],
+  ];
+
+  // ── Action definitions ────────────────────────────────────────────────────
+  const ACTION_DEFS = {
+    jab:      { label: 'JAB',      color: '#f87171', cssVar: '#f87171' },
+    hook:     { label: 'HOOK',     color: '#fb923c', cssVar: '#fb923c' },
+    uppercut: { label: 'UPPERCUT', color: '#fbbf24', cssVar: '#fbbf24' },
+    kick:     { label: 'KICK',     color: '#a78bfa', cssVar: '#a78bfa' },
+    guard:    { label: 'GUARD',    color: '#60a5fa', cssVar: '#60a5fa' },
+    block:    { label: 'BLOCK',    color: '#38bdf8', cssVar: '#38bdf8' },
+    dodge:    { label: 'DODGE',    color: '#fbbf24', cssVar: '#fbbf24' },
+    crouch:   { label: 'CROUCH',   color: '#4ade80', cssVar: '#4ade80' },
+  };
+
+  const CARD_ORDER = ['jab','hook','uppercut','kick','guard','block','dodge','crouch'];
+
+  // ── App state ─────────────────────────────────────────────────────────────
+  let cameraActive = false;
+  let mpPose       = null;
+  let mpCamObj     = null;
+  let liveLm       = null;
+  let liveWorldLm  = null;
+
+  const HIST_MAX = BD.HIST_MAX;
+  const histLW = []; // left  wrist
+  const histRW = []; // right wrist
+  const histLA = []; // left  ankle
+  const histRA = []; // right ankle
+
+  let currentAction    = { action: 'idle', limb: 'none' };
+  let actionHoldFrames = 0;
+
+  const stats = { punchL: 0, punchR: 0, kick: 0, dodge: 0 };
+
+  // Camera orbit state
+  let camTheta = 0.3, camPhi = -0.15, camDist = 2.5;
+  let isDragging = false, lastMouse = { x: 0, y: 0 };
+
+  // FPS tracking
+  let fpsCount = 0, fpsLast = 0;
+
+  // ── Default T-pose world landmarks for idle 3D view ──────────────────────
+  const DEFAULT_WORLD_LM = Array.from({ length: 33 }, () => ({ x: 0, y: 0, z: 0 }));
+  Object.assign(DEFAULT_WORLD_LM, {
+     0: { x: 0.00, y: -0.48, z: -0.05 },  // nose / head
+    11: { x: -0.20, y: -0.25, z: 0.00 },  // L shoulder
+    12: { x:  0.20, y: -0.25, z: 0.00 },  // R shoulder
+    13: { x: -0.40, y: -0.22, z: 0.00 },  // L elbow  (arms extended)
+    14: { x:  0.40, y: -0.22, z: 0.00 },  // R elbow
+    15: { x: -0.58, y: -0.22, z: 0.00 },  // L wrist
+    16: { x:  0.58, y: -0.22, z: 0.00 },  // R wrist
+    23: { x: -0.10, y:  0.02, z: 0.00 },  // L hip
+    24: { x:  0.10, y:  0.02, z: 0.00 },  // R hip
+    25: { x: -0.10, y:  0.27, z: 0.00 },  // L knee
+    26: { x:  0.10, y:  0.27, z: 0.00 },  // R knee
+    27: { x: -0.10, y:  0.52, z: 0.00 },  // L ankle
+    28: { x:  0.10, y:  0.52, z: 0.00 },  // R ankle
+  });
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  function pushHist(hist, pt) {
+    hist.push(pt);
+    if (hist.length > HIST_MAX) hist.shift();
+  }
+
+  /** Convert MediaPipe world landmarks (y-down, mid-hip origin) to body space (y-up). */
+  function worldLmToBodyPos(worldLm) {
+    const pos = {};
+    pos[PELVIS_IDX] = { x: 0, y: 0, z: 0 };
+    if (worldLm[11] && worldLm[12]) {
+      pos[MID_SHOULDER_IDX] = {
+        x:  (worldLm[11].x + worldLm[12].x) * 0.5,
+        y: -((worldLm[11].y + worldLm[12].y) * 0.5),
+        z: -((worldLm[11].z + worldLm[12].z) * 0.5),
+      };
+    }
+    [0, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28].forEach(i => {
+      const p = worldLm[i];
+      if (!p) return;
+      pos[i] = { x: p.x, y: -p.y, z: -p.z };
+    });
+    return pos;
+  }
+
+  // ── Webcam overlay ────────────────────────────────────────────────────────
+  function drawMpOverlay(ctx, lm, W, H) {
+    if (!lm) return;
+    const sx  = p => (1 - p.x) * W;
+    const sy  = p => p.y * H;
+    const dim = p => !p || (p.visibility !== undefined && p.visibility < 0.3);
+
+    ctx.save();
+    ctx.lineCap = 'round';
+
+    // Bones
+    ctx.strokeStyle = 'rgba(180,190,220,0.45)';
+    ctx.lineWidth   = 2;
+    MP_POSE_CONN.forEach(([a, b]) => {
+      const pa = lm[a], pb = lm[b];
+      if (!pa || !pb || dim(pa) || dim(pb)) return;
+      ctx.beginPath();
+      ctx.moveTo(sx(pa), sy(pa));
+      ctx.lineTo(sx(pb), sy(pb));
+      ctx.stroke();
+    });
+
+    // Highlighted joints
+    const highlights = [
+      { idx: 15, color: '#38bdf8', r: 7 },  // L wrist — cyan
+      { idx: 16, color: '#f87171', r: 7 },  // R wrist — red
+      { idx: 27, color: '#4ade80', r: 6 },  // L ankle — green
+      { idx: 28, color: '#a78bfa', r: 6 },  // R ankle — purple
+      { idx: 13, color: '#38bdf8', r: 4 },  // L elbow
+      { idx: 14, color: '#f87171', r: 4 },  // R elbow
+      { idx: 25, color: '#4ade80', r: 4 },  // L knee
+      { idx: 26, color: '#a78bfa', r: 4 },  // R knee
+    ];
+    highlights.forEach(({ idx, color, r }) => {
+      const p = lm[idx];
+      if (!p || dim(p)) return;
+      ctx.beginPath();
+      ctx.arc(sx(p), sy(p), r, 0, 2 * Math.PI);
+      ctx.fillStyle = color;
+      ctx.fill();
+    });
+
+    ctx.restore();
+  }
+
+  // ── Trail drawing (4 limb trails) ─────────────────────────────────────────
+  function drawTrail(ctx, hist, r, g, b, W, H) {
+    if (hist.length < 2) return;
+    ctx.save();
+    ctx.lineCap  = 'round';
+    ctx.lineJoin = 'round';
+    for (let i = 1; i < hist.length; i++) {
+      const a = hist[i - 1], p = hist[i];
+      const t = i / hist.length;  // 0 = oldest, 1 = newest
+      ctx.beginPath();
+      ctx.moveTo((1 - a.x) * W, a.y * H);
+      ctx.lineTo((1 - p.x) * W, p.y * H);
+      ctx.strokeStyle = `rgba(${r},${g},${b},${(t * 0.70).toFixed(2)})`;
+      ctx.lineWidth   = t * 4 + 0.5;
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // ── Action badge on webcam canvas ─────────────────────────────────────────
+  function drawActionBadge(ctx, action, limb, holdFrames, W, H) {
+    const def = ACTION_DEFS[action];
+    if (!def) return;
+
+    const alpha = holdFrames <= 12 ? holdFrames / 12 : 1;
+    const limbSuffix = limb === 'left' ? ' ← L' : limb === 'right' ? ' R →' : '';
+    const label      = def.label + limbSuffix;
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.font        = 'bold 30px system-ui,sans-serif';
+
+    const tw = ctx.measureText(label).width;
+    const bw = tw + 36, bh = 50;
+    const bx = (W - bw) / 2, by = 12;
+
+    // Background
+    ctx.fillStyle = 'rgba(0,0,0,0.65)';
+    ctx.fillRect(bx, by, bw, bh);
+
+    // Accent bar on left
+    ctx.fillStyle = def.color;
+    ctx.fillRect(bx, by, 5, bh);
+
+    // Label
+    ctx.fillStyle    = def.color;
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, W / 2, by + bh / 2);
+
+    ctx.globalAlpha  = 1;
+    ctx.textAlign    = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.restore();
+  }
+
+  // ── 3D bone colour ────────────────────────────────────────────────────────
+  function boneColor(id) {
+    if (id === 'spine' || id === 'neck')                           return '#fbbf24';
+    if (id.startsWith('l') && (id.includes('arm') || id.includes('clav'))) return '#38bdf8';
+    if (id.startsWith('r') && (id.includes('arm') || id.includes('clav'))) return '#f87171';
+    if (id.startsWith('l')) return '#4ade80';
+    if (id.startsWith('r')) return '#fb923c';
+    return '#7b879e';
+  }
+
+  // Key joint accent colours (highlighted in 3D view)
+  const JOINT_ACCENT = { 15: '#38bdf8', 16: '#f87171', 27: '#4ade80', 28: '#a78bfa' };
+
+  // ── 3D renderer ───────────────────────────────────────────────────────────
+  function draw3D(fkPos) {
+    const canvas = document.getElementById('skel3d');
+    if (!canvas) return;
+    const ctx  = canvas.getContext('2d');
+    const rect = canvas.parentElement.getBoundingClientRect();
+    const dpr  = window.devicePixelRatio || 1;
+    const W    = Math.max(rect.width,  200);
+    const H    = Math.max(rect.height, 200);
+
+    if (canvas.width  !== Math.round(W * dpr) ||
+        canvas.height !== Math.round(H * dpr)) {
+      canvas.width  = Math.round(W * dpr);
+      canvas.height = Math.round(H * dpr);
+      ctx.scale(dpr, dpr);
+    }
+    ctx.clearRect(0, 0, W, H);
+
+    function project(bp) {
+      const ct = Math.cos(camTheta), st = Math.sin(camTheta);
+      const rx  =  bp.x * ct + bp.z * st;
+      const rz  = -bp.x * st + bp.z * ct;
+      const cp  = Math.cos(camPhi), sp = Math.sin(camPhi);
+      const ry  =  bp.y * cp - rz * sp;
+      const rz2 =  bp.y * sp + rz * cp;
+      const scale = (W * 0.42 * 1.6) / (camDist + rz2 + 0.001);
+      return { sx: W / 2 + rx * scale, sy: H * 0.44 - ry * scale, sz: rz2 };
+    }
+
+    // Floor grid
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+    ctx.lineWidth   = 1;
+    const GS = 0.15;
+    for (let i = -4; i <= 4; i++) {
+      const ga = project({ x: i*GS, y: -0.56, z: -0.65 });
+      const gb = project({ x: i*GS, y: -0.56, z:  0.65 });
+      const gc = project({ x: -0.65, y: -0.56, z: i*GS });
+      const gd = project({ x:  0.65, y: -0.56, z: i*GS });
+      ctx.beginPath(); ctx.moveTo(ga.sx, ga.sy); ctx.lineTo(gb.sx, gb.sy); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(gc.sx, gc.sy); ctx.lineTo(gd.sx, gd.sy); ctx.stroke();
+    }
+    ctx.restore();
+
+    // Project all joints
+    const pm = {};
+    Object.entries(fkPos).forEach(([idx, bp]) => { pm[+idx] = project(bp); });
+
+    // Sort bones back-to-front
+    const sorted = FK_BONES
+      .filter(b => pm[b.parent] && pm[b.child])
+      .map(b => ({ b, avgZ: (pm[b.parent].sz + pm[b.child].sz) / 2 }))
+      .sort((a, b) => b.avgZ - a.avgZ);
+
+    // Crossbars
+    [[11, 12], [23, 24]].forEach(([a, b]) => {
+      if (!pm[a] || !pm[b]) return;
+      ctx.beginPath();
+      ctx.moveTo(pm[a].sx, pm[a].sy); ctx.lineTo(pm[b].sx, pm[b].sy);
+      ctx.strokeStyle = '#fbbf24'; ctx.lineWidth = 1.5; ctx.globalAlpha = 0.30;
+      ctx.stroke(); ctx.globalAlpha = 1;
+    });
+
+    // Bones
+    sorted.forEach(({ b }) => {
+      const pa = pm[b.parent], pc = pm[b.child];
+      ctx.beginPath();
+      ctx.moveTo(pa.sx, pa.sy); ctx.lineTo(pc.sx, pc.sy);
+      ctx.strokeStyle = boneColor(b.id);
+      ctx.lineWidth   = 2.5;
+      ctx.globalAlpha = 0.82;
+      ctx.lineCap     = 'round';
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    });
+
+    // Joints (back-to-front)
+    const jointIdxs = [...new Set(FK_BONES.flatMap(b => [b.parent, b.child]))];
+    jointIdxs.sort((a, b) => (pm[b] ? pm[b].sz : -99) - (pm[a] ? pm[a].sz : -99));
+    jointIdxs.forEach(idx => {
+      const p = pm[idx];
+      if (!p) return;
+      ctx.beginPath(); ctx.arc(p.sx, p.sy, 5, 0, 2 * Math.PI);
+      ctx.fillStyle   = JOINT_ACCENT[idx] || 'rgba(91,156,246,0.85)';
+      ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.lineWidth = 1;
+      ctx.fill(); ctx.stroke();
+    });
+
+    // Head sphere above nose
+    if (fkPos[0]) {
+      const hp = project({ x: fkPos[0].x, y: fkPos[0].y + 0.07, z: fkPos[0].z });
+      ctx.beginPath(); ctx.arc(hp.sx, hp.sy, 14, 0, 2 * Math.PI);
+      ctx.strokeStyle = '#7b879e'; ctx.lineWidth = 2; ctx.globalAlpha = 0.70;
+      ctx.stroke(); ctx.globalAlpha = 1;
+    }
+
+    // Action label overlay in 3D panel
+    if (currentAction.action !== 'idle' && actionHoldFrames > 0) {
+      const def = ACTION_DEFS[currentAction.action];
+      if (def) {
+        const alpha = Math.min(1, actionHoldFrames / 6);
+        ctx.save();
+        ctx.globalAlpha  = alpha;
+        ctx.font         = 'bold 16px system-ui,sans-serif';
+        ctx.fillStyle    = def.color;
+        ctx.textAlign    = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillText(def.label, W / 2, 10);
+        ctx.restore();
+      }
+    }
+  }
+
+  // ── Action cards UI ───────────────────────────────────────────────────────
+  function buildActionCards() {
+    const grid = document.getElementById('action-grid');
+    if (!grid) return;
+    CARD_ORDER.forEach(name => {
+      const def  = ACTION_DEFS[name];
+      const card = document.createElement('div');
+      card.className = 'action-card';
+      card.id        = `card-${name}`;
+      card.style.setProperty('--card-color', def.color);
+      card.innerHTML = `<div class="ac-dot"></div><div class="ac-name">${def.label}</div>`;
+      grid.appendChild(card);
+    });
+  }
+
+  let lastActiveCard = '';
+  function updateActionCards(action) {
+    if (action === lastActiveCard) return;
+    CARD_ORDER.forEach(name => {
+      const el = document.getElementById(`card-${name}`);
+      if (el) el.classList.toggle('active', name === action);
+    });
+    lastActiveCard = action;
+  }
+
+  // ── Stats ─────────────────────────────────────────────────────────────────
+  function updateStats() {
+    document.getElementById('stat-punch-l').textContent = stats.punchL;
+    document.getElementById('stat-punch-r').textContent = stats.punchR;
+    document.getElementById('stat-kick').textContent    = stats.kick;
+    document.getElementById('stat-dodge').textContent   = stats.dodge;
+  }
+
+  // ── Per-frame processing ──────────────────────────────────────────────────
+  function onPoseResults(results) {
+    if (!cameraActive) return;
+    const canvas = document.getElementById('cam-canvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+
+    // FPS
+    fpsCount++;
+    const now = performance.now();
+    if (now - fpsLast >= 800) {
+      const fps = Math.round(fpsCount / ((now - fpsLast) / 1000));
+      fpsCount = 0; fpsLast = now;
+      const el = document.getElementById('fps-chip');
+      if (el) el.textContent = `${fps} fps`;
+      const fl = document.getElementById('fps-label');
+      if (fl) fl.textContent = `${fps} fps`;
+    }
+
+    const W = 640, H = 480;
+    if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; }
+    ctx.clearRect(0, 0, W, H);
+
+    // Mirrored video frame
+    ctx.save();
+    ctx.translate(W, 0); ctx.scale(-1, 1);
+    ctx.drawImage(results.image, 0, 0, W, H);
+    ctx.restore();
+
+    if (!results.poseLandmarks) return;
+    liveLm      = results.poseLandmarks;
+    liveWorldLm = results.poseWorldLandmarks;
+
+    const lm = liveLm;
+
+    // Update per-limb ring buffers
+    pushHist(histLW, { x: lm[15].x, y: lm[15].y });
+    pushHist(histRW, { x: lm[16].x, y: lm[16].y });
+    pushHist(histLA, { x: lm[27].x, y: lm[27].y });
+    pushHist(histRA, { x: lm[28].x, y: lm[28].y });
+
+    // Swing vectors
+    const swLW = M.computeSwingVector(histLW);
+    const swRW = M.computeSwingVector(histRW);
+    const swLA = M.computeSwingVector(histLA);
+    const swRA = M.computeSwingVector(histRA);
+
+    // Detect action
+    const detected  = BD.classifyBoxingAction(lm, swLW, swRW, swLA, swRA);
+    const isDynamic = ['jab','hook','uppercut','kick'].includes(detected.action);
+    const isStatic  = ['guard','block','dodge','crouch'].includes(detected.action);
+
+    if (isDynamic && actionHoldFrames <= 0) {
+      // Count and record new dynamic event
+      if (detected.action === 'kick') {
+        stats.kick++;
+      } else {
+        if (detected.limb === 'left')  stats.punchL++;
+        if (detected.limb === 'right') stats.punchR++;
+      }
+      updateStats();
+      currentAction    = detected;
+      actionHoldFrames = 30;
+      // Clear the limb history to avoid re-triggering on the same motion
+      if (detected.action === 'kick') {
+        if (detected.limb === 'left') histLA.length = 0; else histRA.length = 0;
+      } else {
+        if (detected.limb === 'left') histLW.length = 0; else histRW.length = 0;
+      }
+    } else if (isStatic) {
+      if (detected.action === 'dodge' && currentAction.action !== 'dodge') {
+        stats.dodge++;
+        updateStats();
+      }
+      currentAction    = detected;
+      actionHoldFrames = 8;  // refresh each frame while held
+    } else if (!isDynamic) {
+      currentAction = { action: 'idle', limb: 'none' };
+    }
+
+    if (actionHoldFrames > 0) actionHoldFrames--;
+
+    // Draw skeleton overlay
+    drawMpOverlay(ctx, lm, W, H);
+
+    // Draw four limb trails
+    drawTrail(ctx, histLW, 56,  189, 248, W, H);  // cyan  — L wrist
+    drawTrail(ctx, histRW, 248, 113, 113, W, H);  // red   — R wrist
+    drawTrail(ctx, histLA, 74,  222, 128, W, H);  // green — L ankle
+    drawTrail(ctx, histRA, 167, 139, 250, W, H);  // purple— R ankle
+
+    // Action badge
+    if (currentAction.action !== 'idle' && actionHoldFrames > 0) {
+      drawActionBadge(ctx, currentAction.action, currentAction.limb, actionHoldFrames, W, H);
+    }
+
+    // Update card UI
+    updateActionCards(currentAction.action);
+
+    // 3D view
+    if (liveWorldLm) draw3D(worldLmToBodyPos(liveWorldLm));
+  }
+
+  // ── Camera start / stop ───────────────────────────────────────────────────
+  async function toggleCamera() {
+    const btn  = document.getElementById('start-btn');
+    const ph   = document.getElementById('cam-placeholder');
+
+    if (cameraActive) {
+      cameraActive = false;
+      if (mpCamObj) { try { mpCamObj.stop(); } catch (e) {} mpCamObj = null; }
+      if (mpPose)   { try { mpPose.close();  } catch (e) {} mpPose   = null; }
+      btn.textContent = 'Start Camera';
+      btn.classList.remove('on');
+      if (ph) ph.style.display = '';
+      draw3D(worldLmToBodyPos(DEFAULT_WORLD_LM));
+      return;
+    }
+
+    if (typeof Pose === 'undefined' || typeof Camera === 'undefined') {
+      alert('MediaPipe scripts are still loading. Please wait a moment and try again.');
+      return;
+    }
+
+    btn.textContent = 'Starting…';
+    btn.disabled    = true;
+    if (ph) ph.style.display = 'none';
+
+    const video = document.createElement('video');
+    video.setAttribute('playsinline', '');
+    video.style.display = 'none';
+    document.body.appendChild(video);
+
+    mpPose = new Pose({
+      locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`,
+    });
+    mpPose.setOptions({
+      modelComplexity:        1,
+      smoothLandmarks:        true,
+      enableSegmentation:     false,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence:  0.5,
+    });
+    mpPose.onResults(onPoseResults);
+
+    mpCamObj = new Camera(video, {
+      onFrame: async () => { await mpPose.send({ image: video }); },
+      width: 640, height: 480,
+    });
+
+    try {
+      await mpCamObj.start();
+      cameraActive    = true;
+      btn.textContent = 'Stop Camera';
+      btn.disabled    = false;
+      btn.classList.add('on');
+      fpsLast  = performance.now();
+      fpsCount = 0;
+    } catch (err) {
+      btn.textContent = 'Start Camera';
+      btn.disabled    = false;
+      if (ph) ph.style.display = '';
+      alert('Could not start camera: ' + err.message);
+      document.body.removeChild(video);
+    }
+  }
+
+  // ── Orbit controls on 3D canvas ───────────────────────────────────────────
+  function initOrbitControls() {
+    const canvas = document.getElementById('skel3d');
+    if (!canvas) return;
+
+    canvas.addEventListener('mousedown', e => {
+      isDragging = true; lastMouse = { x: e.clientX, y: e.clientY };
+    });
+    window.addEventListener('mousemove', e => {
+      if (!isDragging) return;
+      camTheta += (e.clientX - lastMouse.x) * 0.010;
+      camPhi   += (e.clientY - lastMouse.y) * 0.010;
+      camPhi    = Math.max(-Math.PI / 2 + 0.05, Math.min(Math.PI / 2 - 0.05, camPhi));
+      lastMouse = { x: e.clientX, y: e.clientY };
+      if (!cameraActive) draw3D(worldLmToBodyPos(DEFAULT_WORLD_LM));
+    });
+    window.addEventListener('mouseup', () => { isDragging = false; });
+    canvas.addEventListener('wheel', e => {
+      e.preventDefault();
+      camDist = Math.max(0.8, Math.min(6, camDist + e.deltaY * 0.005));
+      if (!cameraActive) draw3D(worldLmToBodyPos(DEFAULT_WORLD_LM));
+    }, { passive: false });
+
+    // Touch
+    let t0 = null;
+    canvas.addEventListener('touchstart', e => {
+      if (e.touches.length === 1) t0 = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    }, { passive: true });
+    canvas.addEventListener('touchmove', e => {
+      e.preventDefault();
+      if (e.touches.length !== 1 || !t0) return;
+      camTheta += (e.touches[0].clientX - t0.x) * 0.010;
+      camPhi   += (e.touches[0].clientY - t0.y) * 0.010;
+      camPhi    = Math.max(-Math.PI / 2 + 0.05, Math.min(Math.PI / 2 - 0.05, camPhi));
+      t0 = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      if (!cameraActive) draw3D(worldLmToBodyPos(DEFAULT_WORLD_LM));
+    }, { passive: false });
+    canvas.addEventListener('touchend', () => { t0 = null; }, { passive: true });
+  }
+
+  // ── Init ──────────────────────────────────────────────────────────────────
+  function init() {
+    buildActionCards();
+    initOrbitControls();
+    draw3D(worldLmToBodyPos(DEFAULT_WORLD_LM));
+    document.getElementById('start-btn').addEventListener('click', toggleCamera);
+    window.addEventListener('resize', () => {
+      if (!cameraActive) draw3D(worldLmToBodyPos(DEFAULT_WORLD_LM));
+    });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+
+})();
+</script>
+</body>
+</html>
