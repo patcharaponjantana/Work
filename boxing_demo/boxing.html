@@ -349,8 +349,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
   let charPos      = { x: 0, y: 0, z: 0 };
   let posMultiplier = 1;                    // user-adjustable scale factor
   const REF_SHOULDER_W = 0.26;             // reference shoulder width in normalised coords
-  const CHAR_SMOOTH    = 0.10;             // EMA factor for X/Y — lower = smoother but laggier
-  const CHAR_Z_SMOOTH  = 0.25;             // faster Z tracking so plane follows body movement promptly
+  const CHAR_SMOOTH    = 0.10;             // EMA factor for position — lower = smoother but laggier
 
   // Biomechanical Z (foreshortening) for wrists + ankles
   let biomechEnabled     = false;
@@ -434,10 +433,11 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
   function computeCharPosition(lm) {
     if (!lm || lm.length < 25) return null;
     const midHipX = (lm[23].x + lm[24].x) / 2;
+    const shW = Math.abs(lm[11].x - lm[12].x);
     return {
       x: -(midHipX - 0.5) * 1.8,
       y: 0,
-      z: planeBaseZ,
+      z: (shW / REF_SHOULDER_W - 1) * 0.9,  // shoulder width → depth proxy; wider = closer = positive Z
     };
   }
 
@@ -1347,10 +1347,8 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     const rawPos = computeCharPosition(lm);
     if (rawPos) {
       charPos.x += CHAR_SMOOTH * (rawPos.x * posMultiplier - charPos.x);
-      if (smoothedDepths) {
-        charPos.z += CHAR_Z_SMOOTH * (smoothedDepths.body * posMultiplier - charPos.z);
-        syncPlaneFromDepths(smoothedDepths);
-      }
+      charPos.z += CHAR_SMOOTH * (rawPos.z * posMultiplier - charPos.z);
+      if (smoothedDepths) syncPlaneFromDepths(smoothedDepths);
     }
 
     if (staminaCooldown > 0) staminaCooldown--;
