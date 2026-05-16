@@ -39,10 +39,10 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
   display:flex;gap:6px;align-items:center;white-space:nowrap;
 }
 .stat-chip .sv{font-weight:700;font-size:14px;color:var(--accent);min-width:22px;text-align:center}
-.stat-chip.s-punch-l .sv{color:var(--cyan)}
-.stat-chip.s-punch-r .sv{color:var(--red)}
-.stat-chip.s-kick    .sv{color:var(--purple)}
-.stat-chip.s-dodge   .sv{color:var(--amber)}
+.stat-chip.s-guard       .sv{color:var(--sky)}
+.stat-chip.s-dodge-left  .sv{color:var(--cyan)}
+.stat-chip.s-dodge-right .sv{color:var(--red)}
+.stat-chip.s-dodge-back  .sv{color:var(--amber)}
 .fps-chip{
   background:var(--surface2);border:1px solid var(--border);
   border-radius:6px;padding:4px 10px;
@@ -160,6 +160,26 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
 .action-card.active .ac-dot{opacity:1;box-shadow:0 0 7px var(--card-color, var(--accent))}
 .ac-name{font-size:12px;font-weight:700;letter-spacing:.04em;color:var(--muted);transition:color 180ms}
 .action-card.active .ac-name{color:var(--text)}
+
+/* ── Stamina bar ── */
+.stamina-row{
+  display:flex;align-items:center;gap:10px;padding:8px 12px;
+  background:var(--surface);border:1px solid var(--border);border-radius:8px;
+  flex-shrink:0;
+}
+.stamina-track{
+  flex:1;height:12px;border-radius:6px;background:var(--surface3);
+  border:1px solid var(--border);overflow:hidden;min-width:80px;
+}
+.stamina-fill{
+  height:100%;width:100%;transform:scaleX(1);transform-origin:left center;
+  background:linear-gradient(90deg,#22c55e,#4ade80);
+  border-radius:5px;transition:transform 80ms ease-out,background 200ms;
+}
+.stamina-fill.low{background:linear-gradient(90deg,#ca8a04,#fbbf24)}
+.stamina-fill.empty{background:linear-gradient(90deg,#b91c1c,#f87171)}
+.stamina-val{font-family:var(--mono);font-size:12px;font-weight:700;color:var(--muted);min-width:36px;text-align:right}
+.stamina-hint{font-size:10px;color:var(--dim);max-width:220px;line-height:1.35}
 </style>
 </head>
 <body>
@@ -167,10 +187,10 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
 <header class="hdr">
   <span class="hdr-title">Boxing Demo</span>
   <div class="stat-row">
-    <div class="stat-chip s-punch-l"><span class="sv" id="stat-punch-l">0</span>Jabs L</div>
-    <div class="stat-chip s-punch-r"><span class="sv" id="stat-punch-r">0</span>Jabs R</div>
-    <div class="stat-chip s-kick">   <span class="sv" id="stat-kick">0</span>Kicks</div>
-    <div class="stat-chip s-dodge">  <span class="sv" id="stat-dodge">0</span>Dodges</div>
+    <div class="stat-chip s-guard">      <span class="sv" id="stat-guard">0</span>Guard</div>
+    <div class="stat-chip s-dodge-left"> <span class="sv" id="stat-dodge-left">0</span>Dodge L</div>
+    <div class="stat-chip s-dodge-right"><span class="sv" id="stat-dodge-right">0</span>Dodge R</div>
+    <div class="stat-chip s-dodge-back"> <span class="sv" id="stat-dodge-back">0</span>Dodge Back</div>
   </div>
   <div class="hdr-spacer"></div>
   <div class="pos-chip" id="pos-chip" title="Character world position">
@@ -226,6 +246,23 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
       <button class="bio-btn" id="bio-calibrate" type="button">Calibrate</button>
       <span class="bio-status" id="bio-status">not calibrated</span>
     </div>
+
+    <div class="stamina-row" title="Punch / charge punch / kick cost stamina">
+      <span class="mult-label">Stamina</span>
+      <div class="stamina-track">
+        <div class="stamina-fill" id="stamina-fill"></div>
+      </div>
+      <span class="stamina-val" id="stamina-val">100</span>
+      <span class="stamina-hint" id="stamina-hint">Cross plane cost</span>
+    </div>
+
+    <div class="mult-row">
+      <span class="mult-label">Hip +</span>
+      <input type="range" id="plane-z" class="mult-slider"
+             min="0.05" max="0.80" step="0.05" value="0.35"
+             title="Stamina plane offset ahead of hip/body depth">
+      <span class="mult-val" id="plane-z-val">+0.35m</span>
+    </div>
   </div>
 
 </div>
@@ -268,17 +305,13 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
 
   // ── Action definitions ────────────────────────────────────────────────────
   const ACTION_DEFS = {
-    jab:      { label: 'JAB',      color: '#f87171', cssVar: '#f87171' },
-    hook:     { label: 'HOOK',     color: '#fb923c', cssVar: '#fb923c' },
-    uppercut: { label: 'UPPERCUT', color: '#fbbf24', cssVar: '#fbbf24' },
-    kick:     { label: 'KICK',     color: '#a78bfa', cssVar: '#a78bfa' },
-    guard:    { label: 'GUARD',    color: '#60a5fa', cssVar: '#60a5fa' },
-    block:    { label: 'BLOCK',    color: '#38bdf8', cssVar: '#38bdf8' },
-    dodge:    { label: 'DODGE',    color: '#fbbf24', cssVar: '#fbbf24' },
-    crouch:   { label: 'CROUCH',   color: '#4ade80', cssVar: '#4ade80' },
+    guard:      { label: 'GUARD',       color: '#60a5fa', cssVar: '#60a5fa' },
+    dodge_left: { label: 'DODGE LEFT',  color: '#38bdf8', cssVar: '#38bdf8' },
+    dodge_right:{ label: 'DODGE RIGHT', color: '#f87171', cssVar: '#f87171' },
+    dodge_back: { label: 'DODGE BACK',  color: '#fbbf24', cssVar: '#fbbf24' },
   };
 
-  const CARD_ORDER = ['jab','hook','uppercut','kick','guard','block','dodge','crouch'];
+  const CARD_ORDER = ['guard','dodge_left','dodge_right','dodge_back'];
 
   // ── App state ─────────────────────────────────────────────────────────────
   let cameraActive = false;
@@ -296,7 +329,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
   let currentAction    = { action: 'idle', limb: 'none' };
   let actionHoldFrames = 0;
 
-  const stats = { punchL: 0, punchR: 0, kick: 0, dodge: 0 };
+  const stats = { guard: 0, dodge_left: 0, dodge_right: 0, dodge_back: 0 };
 
   // Camera orbit state
   let camTheta = 0.3, camPhi = -0.15, camDist = 2.5;
@@ -315,6 +348,21 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
   const BIO_SMOOTH       = 0.35;
   const BIO_ARM_Z_SCALE  = 0.55;  // metres of forward wrist reach at full foreshortening
   const BIO_LEG_Z_SCALE  = 0.75;  // metres of forward ankle reach at full foreshortening
+
+  // Stamina (offensive actions only in this demo)
+  const STAMINA_MAX            = 100;
+  const STAM_COST_PUNCH        = 12;
+  const STAM_COST_CHARGE_PUNCH = 24;
+  const STAM_COST_KICK         = 32;
+  const STAM_REGEN_PER_FRAME   = 0.35;
+  const STAMINA_PLANE_COOLDOWN = 25;
+
+  let stamina           = STAMINA_MAX;
+  let staminaCooldown   = 0;
+  let forwardPlaneOffset = 0.35;
+  let forwardRefs       = null;
+  let prevForwardDepths = null;
+  const punchWindup     = { l: 0, r: 0 };
 
   // FPS tracking
   let fpsCount = 0, fpsLast = 0;
@@ -705,6 +753,28 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     ctx.textBaseline = 'bottom';
     ctx.fillText('BACK', MX, RY + RS - 3);
 
+    // Forward stamina plane (red) — follows hip depth + offset
+    const planeWorldZ = charPos.z + forwardPlaneOffset;
+    const planeY = MY - (planeWorldZ / RANGE) * (RS / 2);
+    const dotYPre = MY - (charPos.z / RANGE) * (RS / 2);
+    const zoneTop = Math.min(dotYPre, planeY);
+    const zoneBot = Math.max(dotYPre, planeY);
+    ctx.fillStyle = 'rgba(248,113,113,0.10)';
+    ctx.fillRect(RX + 2, zoneTop, RS - 4, Math.max(2, zoneBot - zoneTop));
+    ctx.setLineDash([5, 4]);
+    ctx.strokeStyle = 'rgba(248,113,113,0.95)';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(RX + 2, planeY);
+    ctx.lineTo(RX + RS - 2, planeY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#f87171';
+    ctx.font = 'bold 8px system-ui,sans-serif';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(`HIP +${forwardPlaneOffset.toFixed(2)}m`, RX + RS - 4, planeY - 3);
+
     // Character dot — charPos.z > 0 = forward = top of radar (FWD label)
     const dotX = MX + (charPos.x  / RANGE) * (RS / 2);
     const dotY = MY - (charPos.z  / RANGE) * (RS / 2);  // z>0 → moves up (FWD)
@@ -727,6 +797,51 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     ctx.textBaseline = 'top';
     ctx.fillText('TOP VIEW', RX + 3, RY + 3);
 
+    ctx.restore();
+  }
+
+  /** Red vertical plane in 3D — hip world Z + forward offset (moves with character). */
+  function drawForwardPlane3D(ctx, projectWorld, W) {
+    const planeZ = charPos.z + forwardPlaneOffset;
+    const yBot   = -0.58;
+    const yTop   = 0.50;
+    const xExt   = 1.15;
+    const cx     = charPos.x;
+    const p0 = projectWorld({ x: cx - xExt, y: yBot, z: planeZ });
+    const p1 = projectWorld({ x: cx + xExt, y: yBot, z: planeZ });
+    const p2 = projectWorld({ x: cx + xExt, y: yTop, z: planeZ });
+    const p3 = projectWorld({ x: cx - xExt, y: yTop, z: planeZ });
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(p0.sx, p0.sy);
+    ctx.lineTo(p1.sx, p1.sy);
+    ctx.lineTo(p2.sx, p2.sy);
+    ctx.lineTo(p3.sx, p3.sy);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(248,113,113,0.14)';
+    ctx.fill();
+    ctx.setLineDash([8, 6]);
+    ctx.strokeStyle = 'rgba(248,113,113,0.90)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Floor edge highlight on the plane
+    ctx.beginPath();
+    ctx.moveTo(p0.sx, p0.sy);
+    ctx.lineTo(p1.sx, p1.sy);
+    ctx.strokeStyle = '#f87171';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    ctx.font = 'bold 11px system-ui,sans-serif';
+    ctx.fillStyle = '#f87171';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const labelY = (p0.sy + p1.sy) * 0.5;
+    const labelX = (p0.sx + p1.sx) * 0.5;
+    ctx.fillText(`HIP +${forwardPlaneOffset.toFixed(2)}m`, labelX, labelY - 14);
     ctx.restore();
   }
 
@@ -800,6 +915,9 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
       ctx.beginPath(); ctx.moveTo(gc.sx, gc.sy); ctx.lineTo(gd.sx, gd.sy); ctx.stroke();
     }
     ctx.restore();
+
+    // Forward stamina plane in 3D (vertical wall at charPos.z + offset)
+    drawForwardPlane3D(ctx, projectWorld, W);
 
     // Project all joints
     const pm = {};
@@ -904,10 +1022,22 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
 
   // ── Stats ─────────────────────────────────────────────────────────────────
   function updateStats() {
-    document.getElementById('stat-punch-l').textContent = stats.punchL;
-    document.getElementById('stat-punch-r').textContent = stats.punchR;
-    document.getElementById('stat-kick').textContent    = stats.kick;
-    document.getElementById('stat-dodge').textContent   = stats.dodge;
+    document.getElementById('stat-guard').textContent       = stats.guard;
+    document.getElementById('stat-dodge-left').textContent  = stats.dodge_left;
+    document.getElementById('stat-dodge-right').textContent = stats.dodge_right;
+    document.getElementById('stat-dodge-back').textContent  = stats.dodge_back;
+  }
+
+  function updateStaminaUI() {
+    const ratio = Math.max(0, Math.min(1, stamina / STAMINA_MAX));
+    const fill = document.getElementById('stamina-fill');
+    const val  = document.getElementById('stamina-val');
+    if (fill) {
+      fill.style.transform = `scaleX(${ratio})`;
+      fill.classList.toggle('low', ratio > 0 && ratio <= 0.35);
+      fill.classList.toggle('empty', ratio <= 0);
+    }
+    if (val) val.textContent = String(Math.round(stamina));
   }
 
   // ── Per-frame processing ──────────────────────────────────────────────────
@@ -965,36 +1095,47 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     const swLA = M.computeSwingVector(histLA);
     const swRA = M.computeSwingVector(histRA);
 
-    // Detect action
-    const detected  = BD.classifyBoxingAction(lm, swLW, swRW, swLA, swRA);
-    const isDynamic = ['jab','hook','uppercut','kick'].includes(detected.action);
-    const isStatic  = ['guard','block','dodge','crouch'].includes(detected.action);
+    // Stamina: only when forward depth crosses the red plane (not noisy swing spikes)
+    if (!forwardRefs) forwardRefs = BD.captureForwardRefs(lm);
+    const currDepths = forwardRefs ? BD.computeForwardDepths(lm, forwardRefs) : null;
 
-    if (isDynamic && actionHoldFrames <= 0) {
-      // Count and record new dynamic event
-      if (detected.action === 'kick') {
-        stats.kick++;
-      } else {
-        if (detected.limb === 'left')  stats.punchL++;
-        if (detected.limb === 'right') stats.punchR++;
+    if (staminaCooldown > 0) staminaCooldown--;
+
+    if (currDepths && prevForwardDepths && staminaCooldown <= 0) {
+      const off = BD.detectStaminaPlaneCross(
+        prevForwardDepths, currDepths, forwardPlaneOffset,
+        punchWindup, swLW, swRW, swLA, swRA
+      );
+      if (off) {
+        const cost =
+          off.kind === 'kick'
+            ? STAM_COST_KICK
+            : off.kind === 'charge_punch'
+              ? STAM_COST_CHARGE_PUNCH
+              : STAM_COST_PUNCH;
+        stamina = Math.max(0, stamina - cost);
+        staminaCooldown = STAMINA_PLANE_COOLDOWN;
       }
-      updateStats();
-      currentAction    = detected;
-      actionHoldFrames = 30;
-      // Clear the limb history to avoid re-triggering on the same motion
-      if (detected.action === 'kick') {
-        if (detected.limb === 'left') histLA.length = 0; else histRA.length = 0;
-      } else {
-        if (detected.limb === 'left') histLW.length = 0; else histRW.length = 0;
-      }
-    } else if (isStatic) {
-      if (detected.action === 'dodge' && currentAction.action !== 'dodge') {
-        stats.dodge++;
+    } else if (currDepths) {
+      BD.tickPunchWindup(punchWindup, swLW, swRW);
+    }
+    if (currDepths) prevForwardDepths = { ...currDepths };
+
+    stamina = Math.min(STAMINA_MAX, stamina + STAM_REGEN_PER_FRAME);
+    updateStaminaUI();
+
+    // Detect only the four defensive actions used by the game loop.
+    const detected = BD.classifyBoxingAction(lm, swLW, swRW, swLA, swRA);
+    const isTrackedAction = CARD_ORDER.includes(detected.action);
+
+    if (isTrackedAction) {
+      if (currentAction.action !== detected.action) {
+        stats[detected.action]++;
         updateStats();
       }
       currentAction    = detected;
       actionHoldFrames = 8;  // refresh each frame while held
-    } else if (!isDynamic) {
+    } else {
       currentAction = { action: 'idle', limb: 'none' };
     }
 
@@ -1038,6 +1179,13 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
       btn.classList.remove('on');
       if (ph) ph.style.display = '';
       charPos = { x: 0, y: 0, z: 0 };  // reset position when camera stops
+      stamina = STAMINA_MAX;
+      punchWindup.l = 0;
+      punchWindup.r = 0;
+      staminaCooldown = 0;
+      forwardRefs = null;
+      prevForwardDepths = null;
+      updateStaminaUI();
       updatePositionHUD();
       draw3D(worldLmToBodyPos(DEFAULT_WORLD_LM));
       return;
@@ -1136,6 +1284,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     buildActionCards();
     initOrbitControls();
     draw3D(worldLmToBodyPos(DEFAULT_WORLD_LM));
+    updateStaminaUI();
     document.getElementById('start-btn').addEventListener('click', toggleCamera);
 
     // Multiplier slider
@@ -1145,6 +1294,20 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
       multSlider.addEventListener('input', () => {
         posMultiplier = parseFloat(multSlider.value);
         if (multVal) multVal.textContent = posMultiplier + '×';
+      });
+    }
+
+    const planeSlider = document.getElementById('plane-z');
+    const planeVal    = document.getElementById('plane-z-val');
+    if (planeSlider) {
+      planeSlider.addEventListener('input', () => {
+        forwardPlaneOffset = parseFloat(planeSlider.value);
+        if (planeVal) planeVal.textContent = '+' + forwardPlaneOffset.toFixed(2) + 'm';
+        if (liveWorldLm && liveLm) {
+          draw3D(applyBiomechDepth(worldLmToBodyPos(liveWorldLm), liveLm));
+        } else if (!cameraActive) {
+          draw3D(worldLmToBodyPos(DEFAULT_WORLD_LM));
+        }
       });
     }
 

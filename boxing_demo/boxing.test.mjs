@@ -309,6 +309,45 @@ describe('detectBoxerDodge', () => {
     ));
 });
 
+// ─── detectDirectionalDodge ───────────────────────────────────────────────────
+
+describe('detectDirectionalDodge', () => {
+  it('returns null for missing landmarks', () => {
+    assert.equal(B.detectDirectionalDodge(null), null);
+    assert.equal(B.detectDirectionalDodge(makeLm().slice(0, 12)), null);
+  });
+
+  it('returns null for a centred standing pose', () =>
+    assert.equal(B.detectDirectionalDodge(makeLm()), null));
+
+  it('detects dodge_left when raw shoulders shift right in mirrored camera space', () =>
+    assert.equal(
+      B.detectDirectionalDodge(makeLm({ 11: { x: 0.56 }, 12: { x: 0.76 } })),
+      'dodge_left'
+    ));
+
+  it('detects dodge_right when raw shoulders shift left in mirrored camera space', () =>
+    assert.equal(
+      B.detectDirectionalDodge(makeLm({ 11: { x: 0.24 }, 12: { x: 0.44 } })),
+      'dodge_right'
+    ));
+
+  it('detects dodge_back when shoulder width becomes smaller than threshold', () =>
+    assert.equal(
+      B.detectDirectionalDodge(makeLm({ 11: { x: 0.40 }, 12: { x: 0.60 } })),
+      'dodge_back'
+    ));
+
+  it('respects custom thresholds', () =>
+    assert.equal(
+      B.detectDirectionalDodge(
+        makeLm({ 11: { x: 0.40 }, 12: { x: 0.60 } }),
+        { backShoulderWidth: 0.18 }
+      ),
+      null
+    ));
+});
+
 // ─── detectBoxerCrouch ────────────────────────────────────────────────────────
 
 describe('detectBoxerCrouch', () => {
@@ -355,62 +394,12 @@ describe('classifyBoxingAction', () => {
     assert.equal(res.limb,   'none');
   });
 
-  it('detects right jab from right-wrist swing', () => {
-    const sw  = makeSwing(0.05, 0.14);   // speed ≈ 0.149 > PUNCH_SPEED 0.12
-    const res = B.classifyBoxingAction(makeLm(), null, sw, null, null);
-    assert.equal(res.action, 'jab');
-    assert.equal(res.limb,   'right');
-  });
-
-  it('detects left jab from left-wrist swing', () => {
-    const sw  = makeSwing(0.05, 0.14);
-    const res = B.classifyBoxingAction(makeLm(), sw, null, null, null);
-    assert.equal(res.action, 'jab');
-    assert.equal(res.limb,   'left');
-  });
-
-  it('detects hook from dominant horizontal swing', () => {
-    const sw  = makeSwing(0.22, 0.01);   // |dx|/speed > 0.65
-    const res = B.classifyBoxingAction(makeLm(), sw, null, null, null);
-    assert.equal(res.action, 'hook');
-    assert.equal(res.limb,   'left');
-  });
-
-  it('detects uppercut from dominant upward swing', () => {
-    const sw  = makeSwing(0.01, -0.18);  // dy < -0.04 and (-dy)/speed > 0.40
-    const res = B.classifyBoxingAction(makeLm(), null, sw, null, null);
-    assert.equal(res.action, 'uppercut');
-    assert.equal(res.limb,   'right');
-  });
-
-  it('kick takes priority over a simultaneous punch', () => {
+  it('ignores punch and kick swings in the simplified defensive action set', () => {
     const punch = makeSwing(0.05, 0.14);
-    const kick  = { speed: B.KICK_SPEED + 0.05 };
-    const res   = B.classifyBoxingAction(makeLm(), null, punch, kick, null);
-    assert.equal(res.action, 'kick');
-    assert.equal(res.limb,   'left');
-  });
-
-  it('right kick detected when only right ankle is fast', () => {
     const kick = { speed: B.KICK_SPEED + 0.05 };
-    const res  = B.classifyBoxingAction(makeLm(), null, null, null, kick);
-    assert.equal(res.action, 'kick');
-    assert.equal(res.limb,   'right');
-  });
-
-  it('picks the faster limb when both kick simultaneously', () => {
-    const la = { speed: 0.18 };
-    const ra = { speed: 0.25 };
-    const res = B.classifyBoxingAction(makeLm(), null, null, la, ra);
-    assert.equal(res.action, 'kick');
-    assert.equal(res.limb,   'right');
-  });
-
-  it('picks the faster limb when both punches fire simultaneously', () => {
-    const swL = makeSwing(0.06, 0.13);       // speed ≈ 0.143
-    const swR = { dx: 0.10, dy: 0.18, speed: 0.21 };  // faster
-    const res = B.classifyBoxingAction(makeLm(), swL, swR, null, null);
-    assert.equal(res.limb, 'right');
+    const res = B.classifyBoxingAction(makeLm(), punch, punch, kick, kick);
+    assert.equal(res.action, 'idle');
+    assert.equal(res.limb,   'none');
   });
 
   it('detects guard when both wrists are near chin', () => {
@@ -422,49 +411,141 @@ describe('classifyBoxingAction', () => {
     assert.equal(res.limb,   'both');
   });
 
-  it('detects block when both wrists are in the chest zone', () => {
-    const lm    = makeLm();
-    const shY   = (lm[11].y + lm[12].y) / 2;
-    const hipY  = (lm[23].y + lm[24].y) / 2;
-    const centX = (lm[11].x + lm[12].x) / 2;
-    const midY  = (shY + hipY) / 2;
-    const bLm   = makeLm({
-      15: { x: centX - 0.05, y: midY },
-      16: { x: centX + 0.05, y: midY },
-    });
-    const res = B.classifyBoxingAction(bLm, null, null, null, null);
-    assert.equal(res.action, 'block');
-    assert.equal(res.limb,   'both');
-  });
-
-  it('detects dodge when torso leans to the right', () => {
+  it('detects dodge_left when the mirrored player jumps left', () => {
     const dLm = makeLm({ 11: { x: 0.56 }, 12: { x: 0.76 } });
     const res = B.classifyBoxingAction(dLm, null, null, null, null);
-    assert.equal(res.action, 'dodge');
-    assert.equal(res.limb,   'body');
+    assert.equal(res.action, 'dodge_left');
+    assert.equal(res.limb,   'left');
   });
 
-  it('detects crouch when torso is compressed', () => {
-    const lm   = makeLm();
-    const hipY = (lm[23].y + lm[24].y) / 2;
-    const cLm  = makeLm({ 11: { y: hipY - 0.03 }, 12: { y: hipY - 0.03 } });
-    const res  = B.classifyBoxingAction(cLm, null, null, null, null);
-    assert.equal(res.action, 'crouch');
-    assert.equal(res.limb,   'body');
+  it('detects dodge_right when the mirrored player jumps right', () => {
+    const dLm = makeLm({ 11: { x: 0.24 }, 12: { x: 0.44 } });
+    const res = B.classifyBoxingAction(dLm, null, null, null, null);
+    assert.equal(res.action, 'dodge_right');
+    assert.equal(res.limb,   'right');
   });
 
-  it('punch beats guard — dynamic beats static', () => {
+  it('detects dodge_back when shoulders shrink from moving away', () => {
+    const dLm = makeLm({ 11: { x: 0.40 }, 12: { x: 0.60 } });
+    const res = B.classifyBoxingAction(dLm, null, null, null, null);
+    assert.equal(res.action, 'dodge_back');
+    assert.equal(res.limb,   'back');
+  });
+
+  it('guard takes priority over directional dodge', () => {
     const lm    = makeLm();
     const chinY = (lm[0].y + lm[9].y) / 2;
-    const gLm   = makeLm({ 15: { y: chinY }, 16: { y: chinY } });
-    const sw    = makeSwing(0.05, 0.14);
-    const res   = B.classifyBoxingAction(gLm, null, sw, null, null);
-    // Punch is checked before static poses
-    assert.equal(res.action, 'jab');
+    const res   = B.classifyBoxingAction(
+      makeLm({ 11: { x: 0.56 }, 12: { x: 0.76 }, 15: { y: chinY }, 16: { y: chinY } }),
+      null,
+      null,
+      null,
+      null
+    );
+    assert.equal(res.action, 'guard');
+    assert.equal(res.limb,   'both');
   });
 });
 
-// ─── Biomechanical depth estimation ───────────────────────────────────────────
+describe('detectForwardPlaneCross', () => {
+  it('returns true only when crossing forward through a fixed plane', () => {
+    assert.equal(B.detectForwardPlaneCross(0.2, 0.4, 0.35), true);
+    assert.equal(B.detectForwardPlaneCross(0.4, 0.5, 0.35), false);
+    assert.equal(B.detectForwardPlaneCross(0.5, 0.3, 0.35), false);
+  });
+});
+
+describe('detectRelativePlaneCross', () => {
+  const offset = 0.35;
+
+  it('crosses when limb passes body depth + offset (plane moves with base)', () => {
+    assert.equal(B.detectRelativePlaneCross(0.2, 0.55, 0.1, 0.15, offset), true);
+    assert.equal(B.detectRelativePlaneCross(0.5, 0.55, 0.1, 0.15, offset), false);
+    assert.equal(B.detectRelativePlaneCross(0.55, 0.5, 0.1, 0.15, offset), false);
+  });
+});
+
+describe('detectStaminaPlaneCross', () => {
+  const offset = 0.35;
+
+  it('returns null when nothing crosses the hip-relative plane', () => {
+    const prev = { body: 0.1, lw: 0.1, rw: 0.1, la: 0.1, ra: 0.1 };
+    const curr = { body: 0.2, lw: 0.2, rw: 0.2, la: 0.2, ra: 0.2 };
+    const w = { l: 0, r: 0 };
+    assert.equal(
+      B.detectStaminaPlaneCross(prev, curr, offset, w, null, null, null, null),
+      null
+    );
+  });
+
+  it('returns kick when ankle depth crosses body + offset', () => {
+    const prev = { body: 0.1, lw: 0.1, rw: 0.1, la: 0.2, ra: 0.1 };
+    const curr = { body: 0.15, lw: 0.2, rw: 0.2, la: 0.55, ra: 0.2 };
+    const w = { l: 0, r: 0 };
+    const ev = B.detectStaminaPlaneCross(prev, curr, offset, w, null, null, null, null);
+    assert.equal(ev.kind, 'kick');
+    assert.equal(ev.limb, 'left');
+  });
+
+  it('returns punch when wrist crosses without wind-up', () => {
+    const prev = { body: 0.1, lw: 0.2, rw: 0.1, la: 0.1, ra: 0.1 };
+    const curr = { body: 0.15, lw: 0.55, rw: 0.2, la: 0.1, ra: 0.1 };
+    const w = { l: 0, r: 0 };
+    const ev = B.detectStaminaPlaneCross(prev, curr, offset, w, null, null, null, null);
+    assert.equal(ev.kind, 'punch');
+    assert.equal(ev.limb, 'left');
+  });
+
+  it('returns charge_punch when wrist crosses after wind-up frames', () => {
+    const prev = { body: 0.1, lw: 0.2, rw: 0.1, la: 0.1, ra: 0.1 };
+    const curr = { body: 0.15, lw: 0.55, rw: 0.2, la: 0.1, ra: 0.1 };
+    const w = { l: B.CHARGE_WINDUP_MIN_FRAMES, r: 0 };
+    const ev = B.detectStaminaPlaneCross(prev, curr, offset, w, null, null, null, null);
+    assert.equal(ev.kind, 'charge_punch');
+  });
+});
+
+describe('detectOffensiveStaminaEvent', () => {
+  it('returns kick for fast left ankle', () => {
+    const w = { l: 0, r: 0 };
+    const kick = { speed: B.KICK_SPEED + 0.02 };
+    const ev = B.detectOffensiveStaminaEvent(w, null, null, kick, null);
+    assert.deepEqual(ev, { kind: 'kick', limb: 'left' });
+    assert.equal(w.l, 0);
+    assert.equal(w.r, 0);
+  });
+
+  it('returns punch when no wind-up accumulated', () => {
+    const w = { l: 0, r: 0 };
+    const punch = makeSwing(0.05, 0.14);
+    const ev = B.detectOffensiveStaminaEvent(w, punch, null, null, null);
+    assert.equal(ev.kind, 'punch');
+    assert.equal(ev.limb, 'left');
+    assert.equal(ev.punchType, 'jab');
+  });
+
+  it('returns charge_punch after enough low-speed frames on striking limb', () => {
+    const w = { l: 0, r: 0 };
+    const slow = { dx: 0, dy: 0, speed: 0.02 };
+    for (let i = 0; i < B.CHARGE_WINDUP_MIN_FRAMES; i++) {
+      B.detectOffensiveStaminaEvent(w, slow, null, null, null);
+    }
+    const punch = makeSwing(0.05, 0.14);
+    const ev = B.detectOffensiveStaminaEvent(w, punch, null, null, null);
+    assert.equal(ev.kind, 'charge_punch');
+    assert.equal(ev.limb, 'left');
+  });
+
+  it('prioritises kick over punch on the same frame', () => {
+    const w = { l: 0, r: 0 };
+    const kick = { speed: B.KICK_SPEED + 0.02 };
+    const punch = makeSwing(0.05, 0.14);
+    const ev = B.detectOffensiveStaminaEvent(w, punch, null, kick, null);
+    assert.equal(ev.kind, 'kick');
+  });
+});
+
+ // ─── Biomechanical depth estimation ───────────────────────────────────────────
 
 describe('estimateForeshortenedDepth', () => {
   it('returns 0 for invalid calibration', () => {
@@ -540,6 +621,11 @@ describe('estimateBiomechDepths', () => {
 describe('exported constants', () => {
   it('PUNCH_SPEED is a positive number', () =>
     assert.ok(typeof B.PUNCH_SPEED === 'number' && B.PUNCH_SPEED > 0));
+
+  it('charge wind-up tuning constants exist', () => {
+    assert.ok(typeof B.CHARGE_WINDUP_MAX_SPEED === 'number' && B.CHARGE_WINDUP_MAX_SPEED > 0);
+    assert.ok(Number.isInteger(B.CHARGE_WINDUP_MIN_FRAMES) && B.CHARGE_WINDUP_MIN_FRAMES > 0);
+  });
 
   it('KICK_SPEED is a positive number', () =>
     assert.ok(typeof B.KICK_SPEED === 'number' && B.KICK_SPEED > 0));
