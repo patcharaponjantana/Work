@@ -349,7 +349,8 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
   let charPos      = { x: 0, y: 0, z: 0 };
   let posMultiplier = 1;                    // user-adjustable scale factor
   const REF_SHOULDER_W = 0.26;             // reference shoulder width in normalised coords
-  const CHAR_SMOOTH    = 0.10;             // EMA factor — lower = smoother but laggier
+  const CHAR_SMOOTH    = 0.10;             // EMA factor for X/Y — lower = smoother but laggier
+  const CHAR_Z_SMOOTH  = 0.25;             // faster Z tracking so plane follows body movement promptly
 
   // Biomechanical Z (foreshortening) for wrists + ankles
   let biomechEnabled     = false;
@@ -377,6 +378,8 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
   const depthCalibSamples = [];
   let prevForwardDepths = null;
   let liveForwardDepths = null;
+  let smoothedDepths    = null;
+  const DEPTH_SMOOTH    = 0.4;
   let planeBaseZ        = 0;
   let planeWorldZ       = 0;
   let staminaCrossState = BD.createStaminaCrossState();
@@ -472,7 +475,10 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
   function syncPlaneFromDepths(depths) {
     liveForwardDepths = depths;
     planeBaseZ = depths ? depths.body : 0;
-    planeWorldZ = charPos.z + planeBaseZ + forwardPlaneOffset;
+    const wristBase = depthBaseline
+      ? (depthBaseline.lw + depthBaseline.rw) * 0.5
+      : 0;
+    planeWorldZ = charPos.z + planeBaseZ + forwardPlaneOffset + wristBase;
   }
 
   function getLimbPastPlaneChannels(depths) {
@@ -787,7 +793,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     const plane = planeWorldZ;
     const armed = staminaCrossState;
     const lines = [
-      `planeZ ${planeWorldZ != null ? planeWorldZ.toFixed(3) : '—'}  (charZ ${charPos.z.toFixed(3)} + body ${planeBaseZ.toFixed(3)} + ${forwardPlaneOffset.toFixed(2)})`,
+      `planeZ ${planeWorldZ != null ? planeWorldZ.toFixed(3) : '—'}  (charZ ${charPos.z.toFixed(3)} + body ${planeBaseZ.toFixed(3)} + ${forwardPlaneOffset.toFixed(2)} + wBase ${depthBaseline ? ((depthBaseline.lw + depthBaseline.rw) * 0.5).toFixed(3) : '—'})`,
       depthBaseline ? 'cal   ready' : `cal   ${depthCalibSamples.length}/${BD.DEPTH_BASELINE_FRAMES}`,
       d
         ? `depths  body ${d.body.toFixed(3)}  lw ${d.lw.toFixed(3)}  rw ${d.rw.toFixed(3)}  la ${d.la.toFixed(3)}  ra ${d.ra.toFixed(3)}`
@@ -1322,28 +1328,42 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     // Shoulder refs for dodge-back; depth baseline from 3D body space (matches 3D plane)
     if (!forwardRefs) forwardRefs = BD.captureForwardRefs(lm);
     const currDepths = computeStaminaDepths(bodyPosRaw);
-    syncPlaneFromDepths(currDepths);
+
+    // Apply EMA to raw depths to reduce MediaPipe world-Z noise before detection.
+    if (currDepths) {
+      if (!smoothedDepths) {
+        smoothedDepths = { ...currDepths };
+      } else {
+        for (const k of ['body', 'lw', 'rw', 'la', 'ra']) {
+          smoothedDepths[k] += DEPTH_SMOOTH * (currDepths[k] - smoothedDepths[k]);
+        }
+      }
+    } else {
+      smoothedDepths = null;
+    }
+
+    syncPlaneFromDepths(smoothedDepths);
 
     const rawPos = computeCharPosition(lm);
     if (rawPos) {
       charPos.x += CHAR_SMOOTH * (rawPos.x * posMultiplier - charPos.x);
-      if (currDepths) {
-        charPos.z += CHAR_SMOOTH * (currDepths.body * posMultiplier - charPos.z);
-        syncPlaneFromDepths(currDepths);
+      if (smoothedDepths) {
+        charPos.z += CHAR_Z_SMOOTH * (smoothedDepths.body * posMultiplier - charPos.z);
+        syncPlaneFromDepths(smoothedDepths);
       }
     }
 
     if (staminaCooldown > 0) staminaCooldown--;
 
-    if (currDepths) {
+    if (smoothedDepths) {
       BD.updateStaminaCrossArming(
-        staminaCrossState, currDepths, forwardPlaneOffset, BD.STAMINA_REARM_MARGIN
+        staminaCrossState, smoothedDepths, forwardPlaneOffset, BD.STAMINA_REARM_MARGIN
       );
       BD.tickPunchWindup(punchWindup, swLW, swRW);
 
       if (prevForwardDepths && staminaCooldown <= 0) {
         const off = BD.detectStaminaPlaneCross(
-          prevForwardDepths, currDepths, forwardPlaneOffset,
+          prevForwardDepths, smoothedDepths, forwardPlaneOffset,
           punchWindup, swLW, swRW, swLA, swRA, staminaCrossState
         );
         if (off) {
@@ -1358,7 +1378,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
           triggerStaminaHit(off, cost);
         }
       }
-      prevForwardDepths = { ...currDepths };
+      prevForwardDepths = { ...smoothedDepths };
     }
 
     tickStaminaHitFlash();
@@ -1436,6 +1456,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
       depthBaseline = null;
       depthCalibSamples.length = 0;
       prevForwardDepths = null;
+      smoothedDepths = null;
       staminaCrossState = BD.createStaminaCrossState();
       staminaHitFlash = null;
       lastStaminaHit = null;

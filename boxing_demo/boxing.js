@@ -27,7 +27,7 @@
   const CHARGE_WINDUP_MIN_FRAMES = 10;
 
   /** Limb must retreat this far behind the plane before it can trigger stamina again. */
-  const STAMINA_REARM_MARGIN = 0.05;
+  const STAMINA_REARM_MARGIN = 0.02;
 
   /** Frames averaged when capturing standing depth baseline. */
   const DEPTH_BASELINE_FRAMES = 12;
