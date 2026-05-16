@@ -26,6 +26,12 @@
   /** Minimum consecutive low-speed frames on a limb before a punch counts as charged. */
   const CHARGE_WINDUP_MIN_FRAMES = 10;
 
+  /** Limb must retreat this far behind the plane before it can trigger stamina again. */
+  const STAMINA_REARM_MARGIN = 0.05;
+
+  /** Frames averaged when capturing standing depth baseline. */
+  const DEPTH_BASELINE_FRAMES = 12;
+
   /** Maximum entries kept in each per-limb ring buffer. */
   const HIST_MAX = 24;
 
@@ -114,13 +120,20 @@
    * stepping away from the camera.
    *
    * @param {Array<{x,y,z}>} lm
-   * @param {{ sideThreshold?: number, backShoulderWidth?: number }} [opts]
+   * @param {{
+   *   sideThreshold?: number,
+   *   refShW?: number,
+   *   backShrinkRatio?: number,
+   *   shoulderWidthHist?: number[],
+   * }} [opts]
    * @returns {'dodge_left' | 'dodge_right' | 'dodge_back' | null}
    */
   function detectDirectionalDodge(lm, opts) {
     if (!lm || lm.length < 25) return null;
     const sideThreshold = opts && opts.sideThreshold != null ? opts.sideThreshold : 0.08;
-    const backShoulderWidth = opts && opts.backShoulderWidth != null ? opts.backShoulderWidth : 0.22;
+    const backShrinkRatio = opts && opts.backShrinkRatio != null ? opts.backShrinkRatio : 0.88;
+    const refShW = opts && opts.refShW;
+    const shWHist = opts && opts.shoulderWidthHist;
 
     const lSh = lm[B.L_SHOULDER], rSh = lm[B.R_SHOULDER];
     if (!lSh || !rSh) return null;
@@ -130,7 +143,13 @@
 
     if (midX > 0.5 + sideThreshold) return 'dodge_left';
     if (midX < 0.5 - sideThreshold) return 'dodge_right';
-    if (shW > 1e-4 && shW < backShoulderWidth) return 'dodge_back';
+
+    if (refShW > 1e-4 && shW < refShW * backShrinkRatio) {
+      const recentMax = shWHist && shWHist.length
+        ? Math.max.apply(null, shWHist)
+        : shW;
+      if (recentMax >= refShW * 0.92 && recentMax > shW * 1.03) return 'dodge_back';
+    }
     return null;
   }
 
@@ -208,17 +227,35 @@
   }
 
   /**
-   * Forward depth from a limb segment: shorter apparent length → more "forward".
-   * Same idea as body depth from shoulder width.
-   *
-   * @param {number} apparent current 2D length
-   * @param {number} reference standing length
-   * @param {number} [scale=0.9]
+   * Forward depth when apparent size grows (e.g. shoulder width when stepping closer).
+   * Positive = toward camera.
    */
-  function segmentForwardDepth(apparent, reference, scale) {
+  function forwardDepthFromRatio(apparent, reference, scale) {
     const s = scale != null ? scale : 0.9;
     if (!(reference > 1e-4)) return 0;
-    return (reference / Math.max(apparent, 1e-4) - 1) * s;
+    return (apparent / reference - 1) * s;
+  }
+
+  /**
+   * Forward depth when a limb segment foreshortens (shorter 2D length = more forward).
+   */
+  function forwardDepthFromForeshortening(apparent, reference, scale) {
+    const s = scale != null ? scale : 0.9;
+    if (!(apparent > 1e-4)) return 0;
+    return (reference / apparent - 1) * s;
+  }
+
+  /** Hip-relative stamina plane Z (same units as computeForwardDepths). */
+  function getForwardPlaneZ(baseDepth, planeOffset) {
+    if (baseDepth == null || planeOffset == null) return null;
+    return baseDepth + planeOffset;
+  }
+
+  /**
+   * @deprecated Use forwardDepthFromForeshortening for limbs.
+   */
+  function segmentForwardDepth(apparent, reference, scale) {
+    return forwardDepthFromForeshortening(apparent, reference, scale);
   }
 
   /**
@@ -235,12 +272,90 @@
     if (!lSh || !rSh || !lHp || !rHp) return null;
     const shW = Math.abs(lSh.x - rSh.x);
     return {
-      body: segmentForwardDepth(shW, refs.shW),
-      lw:   segmentForwardDepth(dist2(lSh, lm[B.L_WRIST]), refs.lArm),
-      rw:   segmentForwardDepth(dist2(rSh, lm[B.R_WRIST]), refs.rArm),
-      la:   segmentForwardDepth(dist2(lHp, lm[B.L_ANKLE]), refs.lLeg),
-      ra:   segmentForwardDepth(dist2(rHp, lm[B.R_ANKLE]), refs.rLeg),
+      body: forwardDepthFromRatio(shW, refs.shW),
+      lw:   forwardDepthFromForeshortening(dist2(lSh, lm[B.L_WRIST]), refs.lArm),
+      rw:   forwardDepthFromForeshortening(dist2(rSh, lm[B.R_WRIST]), refs.rArm),
+      la:   forwardDepthFromForeshortening(dist2(lHp, lm[B.L_ANKLE]), refs.lLeg),
+      ra:   forwardDepthFromForeshortening(dist2(rHp, lm[B.R_ANKLE]), refs.rLeg),
     };
+  }
+
+  /**
+   * Forward depth from 3D body-space positions (metres, hip-relative Z).
+   * Matches the 3D skeleton and stamina plane in world space.
+   *
+   * @param {Record<number,{x:number,y:number,z:number}>} bodyPos
+   */
+  function computeBodySpaceDepths(bodyPos) {
+    if (!bodyPos) return null;
+    const lHp = bodyPos[B.L_HIP], rHp = bodyPos[B.R_HIP];
+    const lSh = bodyPos[B.L_SHOULDER], rSh = bodyPos[B.R_SHOULDER];
+    if (!lHp || !rHp || !lSh || !rSh) return null;
+    const hipZ = (lHp.z + rHp.z) * 0.5;
+    const shMidZ = (lSh.z + rSh.z) * 0.5;
+    const lW = bodyPos[B.L_WRIST], rW = bodyPos[B.R_WRIST];
+    const lA = bodyPos[B.L_ANKLE], rA = bodyPos[B.R_ANKLE];
+    return {
+      body: shMidZ - hipZ,
+      lw:   lW ? lW.z - hipZ : shMidZ - hipZ,
+      rw:   rW ? rW.z - hipZ : shMidZ - hipZ,
+      la:   lA ? lA.z - hipZ : 0,
+      ra:   rA ? rA.z - hipZ : 0,
+    };
+  }
+
+  /**
+   * @param {{ body,lw,rw,la,ra:number}} depths
+   * @param {{ body,lw,rw,la,ra:number}} baseline
+   */
+  function subtractForwardDepths(depths, baseline) {
+    if (!depths || !baseline) return depths;
+    return {
+      body: depths.body - baseline.body,
+      lw:   depths.lw - baseline.lw,
+      rw:   depths.rw - baseline.rw,
+      la:   depths.la - baseline.la,
+      ra:   depths.ra - baseline.ra,
+    };
+  }
+
+  /**
+   * @param {Array<{ body,lw,rw,la,ra:number}>} samples
+   */
+  function averageForwardDepths(samples) {
+    if (!samples || !samples.length) return null;
+    const n = samples.length;
+    const sum = { body: 0, lw: 0, rw: 0, la: 0, ra: 0 };
+    samples.forEach(d => {
+      sum.body += d.body;
+      sum.lw += d.lw;
+      sum.rw += d.rw;
+      sum.la += d.la;
+      sum.ra += d.ra;
+    });
+    return {
+      body: sum.body / n,
+      lw:   sum.lw / n,
+      rw:   sum.rw / n,
+      la:   sum.la / n,
+      ra:   sum.ra / n,
+    };
+  }
+
+  /**
+   * Collect samples for {@link DEPTH_BASELINE_FRAMES} then return the mean standing pose.
+   *
+   * @param {Array<{ body,lw,rw,la,ra:number}>} samples in-out
+   * @param {Record<number,{x,y,z}>} bodyPos
+   * @returns {{ body,lw,rw,la,ra:number}|null} baseline when ready
+   */
+  function captureDepthBaseline(samples, bodyPos) {
+    if (!samples || !bodyPos || samples.length >= DEPTH_BASELINE_FRAMES) return null;
+    const d = computeBodySpaceDepths(bodyPos);
+    if (!d) return null;
+    samples.push(d);
+    if (samples.length < DEPTH_BASELINE_FRAMES) return null;
+    return averageForwardDepths(samples);
   }
 
   /**
@@ -294,7 +409,32 @@
     }
     const planePrev = prevBase + planeOffset;
     const planeCurr = currBase + planeOffset;
-    return prevCh < planePrev && currCh >= planeCurr;
+    const planeLo = Math.min(planePrev, planeCurr);
+    const planeHi = Math.max(planePrev, planeCurr);
+    if (!(currCh > prevCh + 1e-5)) return false;
+    return prevCh < planeHi && currCh >= planeLo;
+  }
+
+  /** Per-limb gates so each arm/leg can cross the plane again after retracting. */
+  function createStaminaCrossState() {
+    return { lw: true, rw: true, la: true, ra: true };
+  }
+
+  /**
+   * Re-arm a limb when its depth drops behind the hip-relative plane (with margin).
+   *
+   * @param {{ lw:boolean, rw:boolean, la:boolean, ra:boolean }} state
+   * @param {{ body,lw,rw,la,ra:number}} currDepths
+   * @param {number} planeOffset
+   * @param {number} [margin]
+   */
+  function updateStaminaCrossArming(state, currDepths, planeOffset, margin) {
+    if (!state || !currDepths) return;
+    const m = margin != null ? margin : STAMINA_REARM_MARGIN;
+    const plane = currDepths.body + planeOffset;
+    ['lw', 'rw', 'la', 'ra'].forEach(ch => {
+      if (currDepths[ch] < plane - m) state[ch] = true;
+    });
   }
 
   /**
@@ -311,17 +451,21 @@
    * @param {{ dx,dy,speed }|null} swingRW
    * @param {{ dx,dy,speed }|null} swingLA
    * @param {{ dx,dy,speed }|null} swingRA
+   * @param {{ lw:boolean, rw:boolean, la:boolean, ra:boolean }} [crossState]
    * @returns {{ kind:'kick'|'punch'|'charge_punch', limb:string, channel:string }|null}
    */
   function detectStaminaPlaneCross(
-    prevDepths, currDepths, planeOffset, windup, swingLW, swingRW, swingLA, swingRA
+    prevDepths, currDepths, planeOffset, windup, swingLW, swingRW, swingLA, swingRA,
+    crossState
   ) {
     if (!prevDepths || !currDepths) return null;
 
     const crossed = [];
     const channels = ['la', 'ra', 'lw', 'rw'];
     channels.forEach(ch => {
+      const armed = !crossState || crossState[ch];
       if (
+        armed &&
         detectRelativePlaneCross(
           prevDepths[ch], currDepths[ch],
           prevDepths.body, currDepths.body,
@@ -336,6 +480,8 @@
       return null;
     }
 
+    let event = null;
+
     if (crossed.includes('la') || crossed.includes('ra')) {
       windup.l = 0;
       windup.r = 0;
@@ -345,10 +491,8 @@
           : crossed.includes('la')
             ? 'left'
             : 'right';
-      return { kind: 'kick', limb, channel: limb === 'left' ? 'la' : 'ra' };
-    }
-
-    if (crossed.includes('lw') || crossed.includes('rw')) {
+      event = { kind: 'kick', limb, channel: limb === 'left' ? 'la' : 'ra' };
+    } else if (crossed.includes('lw') || crossed.includes('rw')) {
       const limb =
         crossed.includes('lw') && crossed.includes('rw')
           ? (currDepths.lw >= currDepths.rw ? 'left' : 'right')
@@ -359,14 +503,15 @@
         (limb === 'left' ? windup.l : windup.r) >= CHARGE_WINDUP_MIN_FRAMES;
       windup.l = 0;
       windup.r = 0;
-      return {
+      event = {
         kind: charged ? 'charge_punch' : 'punch',
         limb,
         channel: limb === 'left' ? 'lw' : 'rw',
       };
     }
 
-    return null;
+    if (event && crossState) crossState[event.channel] = false;
+    return event;
   }
 
   /**
@@ -515,12 +660,13 @@
    * @param {{ dx,dy,speed }|null}      swingRW  right-wrist swing
    * @param {{ dx,dy,speed }|null}      swingLA  left-ankle  swing
    * @param {{ dx,dy,speed }|null}      swingRA  right-ankle swing
+   * @param {object} [dodgeOpts]         passed to detectDirectionalDodge
    * @returns {{ action: string, limb: string }}
    */
-  function classifyBoxingAction(lm, swingLW, swingRW, swingLA, swingRA) {
+  function classifyBoxingAction(lm, swingLW, swingRW, swingLA, swingRA, dodgeOpts) {
     if (detectBoxerGuard(lm))  return { action: 'guard',  limb: 'both' };
 
-    const dodge = detectDirectionalDodge(lm);
+    const dodge = detectDirectionalDodge(lm, dodgeOpts);
     if (dodge) {
       const limb = dodge === 'dodge_left' ? 'left' : dodge === 'dodge_right' ? 'right' : 'back';
       return { action: dodge, limb };
@@ -535,6 +681,7 @@
     KICK_SPEED,
     CHARGE_WINDUP_MAX_SPEED,
     CHARGE_WINDUP_MIN_FRAMES,
+    STAMINA_REARM_MARGIN,
     HIST_MAX,
     B,
     detectBoxerGuard,
@@ -545,11 +692,21 @@
     classifyPunchType,
     detectKick,
     tickPunchWindup,
+    forwardDepthFromRatio,
+    forwardDepthFromForeshortening,
+    getForwardPlaneZ,
     segmentForwardDepth,
     computeForwardDepths,
+    computeBodySpaceDepths,
+    subtractForwardDepths,
+    averageForwardDepths,
+    captureDepthBaseline,
+    DEPTH_BASELINE_FRAMES,
     captureForwardRefs,
     detectForwardPlaneCross,
     detectRelativePlaneCross,
+    createStaminaCrossState,
+    updateStaminaCrossArming,
     detectStaminaPlaneCross,
     detectOffensiveStaminaEvent,
     estimateForeshortenedDepth,

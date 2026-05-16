@@ -332,20 +332,77 @@ describe('detectDirectionalDodge', () => {
       'dodge_right'
     ));
 
-  it('detects dodge_back when shoulder width becomes smaller than threshold', () =>
+  it('detects dodge_back when shoulders shrink below calibrated ref', () =>
     assert.equal(
-      B.detectDirectionalDodge(makeLm({ 11: { x: 0.40 }, 12: { x: 0.60 } })),
+      B.detectDirectionalDodge(makeLm({ 11: { x: 0.40 }, 12: { x: 0.60 } }), {
+        refShW: 0.26,
+        shoulderWidthHist: [0.26, 0.25, 0.24, 0.23],
+      }),
       'dodge_back'
     ));
 
-  it('respects custom thresholds', () =>
+  it('does not flag dodge_back when always narrow without recent shrink', () =>
     assert.equal(
-      B.detectDirectionalDodge(
-        makeLm({ 11: { x: 0.40 }, 12: { x: 0.60 } }),
-        { backShoulderWidth: 0.18 }
-      ),
+      B.detectDirectionalDodge(makeLm({ 11: { x: 0.40 }, 12: { x: 0.60 } }), {
+        refShW: 0.26,
+        shoulderWidthHist: [0.20, 0.20, 0.20],
+      }),
       null
     ));
+});
+
+describe('forward depth helpers', () => {
+  it('forwardDepthFromRatio is positive when apparent grows (closer)', () => {
+    assert.ok(B.forwardDepthFromRatio(0.30, 0.26) > 0);
+    assert.ok(B.forwardDepthFromRatio(0.20, 0.26) < 0);
+  });
+
+  it('getForwardPlaneZ matches body depth plus offset for UI and detection', () => {
+    const body = 0.12;
+    const offset = 0.14;
+    assert.equal(B.getForwardPlaneZ(body, offset), body + offset);
+  });
+});
+
+describe('computeBodySpaceDepths', () => {
+  function mockBodyPos() {
+    return {
+      11: { x: -0.2, y: -0.25, z: 0.05 },
+      12: { x:  0.2, y: -0.25, z: 0.05 },
+      15: { x: -0.5, y: -0.22, z: 0.12 },
+      16: { x:  0.5, y: -0.22, z: 0.12 },
+      23: { x: -0.1, y:  0.02, z: 0 },
+      24: { x:  0.1, y:  0.02, z: 0 },
+      27: { x: -0.1, y:  0.5, z: 0.02 },
+      28: { x:  0.1, y:  0.5, z: 0.02 },
+    };
+  }
+
+  it('returns hip-relative Z in metres for body and limbs', () => {
+    const d = B.computeBodySpaceDepths(mockBodyPos());
+    assert.ok(Math.abs(d.body - 0.05) < 1e-4);
+    assert.ok(Math.abs(d.lw - 0.12) < 1e-4);
+  });
+
+  it('subtractForwardDepths zeroes the standing pose', () => {
+    const raw = B.computeBodySpaceDepths(mockBodyPos());
+    const norm = B.subtractForwardDepths(raw, raw);
+    assert.equal(norm.body, 0);
+    assert.equal(norm.lw, 0);
+  });
+
+  it('detects punch when wrist Z moves forward after baseline', () => {
+    const base = B.computeBodySpaceDepths(mockBodyPos());
+    const punchPos = mockBodyPos();
+    punchPos[15] = { x: -0.5, y: -0.22, z: 0.38 };
+    const curr = B.subtractForwardDepths(B.computeBodySpaceDepths(punchPos), base);
+    const prev = { body: 0, lw: 0, rw: 0, la: 0, ra: 0 };
+    const offset = 0.18;
+    const w = { l: 0, r: 0 };
+    const ev = B.detectStaminaPlaneCross(prev, curr, offset, w, null, null, null, null);
+    assert.equal(ev.kind, 'punch');
+    assert.equal(ev.limb, 'left');
+  });
 });
 
 // ─── detectBoxerCrouch ────────────────────────────────────────────────────────
@@ -427,7 +484,10 @@ describe('classifyBoxingAction', () => {
 
   it('detects dodge_back when shoulders shrink from moving away', () => {
     const dLm = makeLm({ 11: { x: 0.40 }, 12: { x: 0.60 } });
-    const res = B.classifyBoxingAction(dLm, null, null, null, null);
+    const res = B.classifyBoxingAction(dLm, null, null, null, null, {
+      refShW: 0.26,
+      shoulderWidthHist: [0.26, 0.25, 0.24],
+    });
     assert.equal(res.action, 'dodge_back');
     assert.equal(res.limb,   'back');
   });
@@ -462,6 +522,40 @@ describe('detectRelativePlaneCross', () => {
     assert.equal(B.detectRelativePlaneCross(0.2, 0.55, 0.1, 0.15, offset), true);
     assert.equal(B.detectRelativePlaneCross(0.5, 0.55, 0.1, 0.15, offset), false);
     assert.equal(B.detectRelativePlaneCross(0.55, 0.5, 0.1, 0.15, offset), false);
+  });
+
+  it('detects a fast cross that skips the exact plane edge between frames', () => {
+    assert.equal(B.detectRelativePlaneCross(0.30, 0.62, 0.10, 0.12, offset), true);
+  });
+});
+
+describe('stamina cross state', () => {
+  const offset = 0.35;
+
+  it('re-arms a limb after it retreats behind the plane', () => {
+    const state = B.createStaminaCrossState();
+    B.updateStaminaCrossArming(state, { body: 0.1, lw: 0.2, rw: 0.1, la: 0.1, ra: 0.1 }, offset);
+    assert.equal(state.lw, true);
+
+    const prev = { body: 0.1, lw: 0.2, rw: 0.1, la: 0.1, ra: 0.1 };
+    const curr = { body: 0.15, lw: 0.55, rw: 0.2, la: 0.1, ra: 0.1 };
+    const w = { l: 0, r: 0 };
+    const first = B.detectStaminaPlaneCross(prev, curr, offset, w, null, null, null, null, state);
+    assert.equal(first.kind, 'punch');
+    assert.equal(state.lw, false);
+
+    const noRepeat = B.detectStaminaPlaneCross(curr, { ...curr, lw: 0.58 }, offset, w, null, null, null, null, state);
+    assert.equal(noRepeat, null);
+
+    B.updateStaminaCrossArming(state, { body: 0.15, lw: 0.05, rw: 0.2, la: 0.1, ra: 0.1 }, offset);
+    assert.equal(state.lw, true);
+
+    const second = B.detectStaminaPlaneCross(
+      { body: 0.15, lw: 0.10, rw: 0.2, la: 0.1, ra: 0.1 },
+      { body: 0.18, lw: 0.58, rw: 0.2, la: 0.1, ra: 0.1 },
+      offset, w, null, null, null, null, state
+    );
+    assert.equal(second.kind, 'punch');
   });
 });
 

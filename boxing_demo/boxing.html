@@ -180,6 +180,14 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
 .stamina-fill.empty{background:linear-gradient(90deg,#b91c1c,#f87171)}
 .stamina-val{font-family:var(--mono);font-size:12px;font-weight:700;color:var(--muted);min-width:36px;text-align:right}
 .stamina-hint{font-size:10px;color:var(--dim);max-width:220px;line-height:1.35}
+.debug-panel{
+  display:none;margin-top:6px;padding:8px 10px;border-radius:8px;
+  background:rgba(8,10,18,0.92);border:1px solid rgba(91,156,246,0.35);
+  font-family:var(--mono);font-size:10px;line-height:1.5;color:var(--muted);
+  max-height:120px;overflow:auto;
+}
+.debug-panel.on{display:block}
+.debug-panel b{color:var(--text)}
 </style>
 </head>
 <body>
@@ -259,10 +267,12 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     <div class="mult-row">
       <span class="mult-label">Hip +</span>
       <input type="range" id="plane-z" class="mult-slider"
-             min="0.05" max="0.80" step="0.05" value="0.35"
-             title="Stamina plane offset ahead of hip/body depth">
-      <span class="mult-val" id="plane-z-val">+0.35m</span>
+             min="0.05" max="0.80" step="0.05" value="0.18"
+             title="Stamina plane offset ahead of hip/body depth (metres)">
+      <span class="mult-val" id="plane-z-val">+0.18m</span>
     </div>
+
+    <div class="debug-panel" id="debug-panel" title="Press D to toggle"></div>
   </div>
 
 </div>
@@ -355,14 +365,39 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
   const STAM_COST_CHARGE_PUNCH = 24;
   const STAM_COST_KICK         = 32;
   const STAM_REGEN_PER_FRAME   = 0.35;
-  const STAMINA_PLANE_COOLDOWN = 25;
+  const STAMINA_PLANE_COOLDOWN = 5;
+  const STAMINA_HIT_FRAMES     = 22;
+  const SHOULDER_HIST_MAX      = 15;
 
   let stamina           = STAMINA_MAX;
   let staminaCooldown   = 0;
-  let forwardPlaneOffset = 0.35;
+  let forwardPlaneOffset = 0.18;
   let forwardRefs       = null;
+  let depthBaseline     = null;
+  const depthCalibSamples = [];
   let prevForwardDepths = null;
+  let liveForwardDepths = null;
+  let planeBaseZ        = 0;
+  let planeWorldZ       = 0;
+  let staminaCrossState = BD.createStaminaCrossState();
+  let staminaHitFlash   = null;
+  let lastStaminaHit    = null;
+  let staminaHintFrames = 0;
+  let debugPanelOn      = false;
+  const shoulderWidthHist = [];
   const punchWindup     = { l: 0, r: 0 };
+
+  const STAMINA_HIT = {
+    lw: { joints: [13, 15], bones: ['l_uarm', 'l_farm'], label: 'L PUNCH' },
+    rw: { joints: [14, 16], bones: ['r_uarm', 'r_farm'], label: 'R PUNCH' },
+    la: { joints: [25, 27], bones: ['l_thigh', 'l_shin'], label: 'L KICK' },
+    ra: { joints: [26, 28], bones: ['r_thigh', 'r_shin'], label: 'R KICK' },
+  };
+  const STAMINA_KIND_COLOR = {
+    punch: '#ff4444',
+    charge_punch: '#fbbf24',
+    kick: '#c084fc',
+  };
 
   // FPS tracking
   let fpsCount = 0, fpsLast = 0;
@@ -396,12 +431,59 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
   function computeCharPosition(lm) {
     if (!lm || lm.length < 25) return null;
     const midHipX = (lm[23].x + lm[24].x) / 2;
-    const shW     = Math.abs(lm[11].x - lm[12].x);
     return {
-      x: -(midHipX - 0.5) * 1.8,             // lateral (mirrored)
+      x: -(midHipX - 0.5) * 1.8,
       y: 0,
-      z: (shW / REF_SHOULDER_W - 1) * 0.9,   // depth: larger shW → closer → positive Z (forward)
+      z: planeBaseZ,
     };
+  }
+
+  /** Depths for stamina + plane: world body space, zeroed at standing calibration. */
+  function computeStaminaDepths(bodyPos) {
+    if (!bodyPos) return null;
+    const raw = BD.computeBodySpaceDepths(bodyPos);
+    if (!raw) return null;
+    if (!depthBaseline) {
+      const ready = BD.captureDepthBaseline(depthCalibSamples, bodyPos);
+      if (ready) depthBaseline = ready;
+      return null;
+    }
+    return BD.subtractForwardDepths(raw, depthBaseline);
+  }
+
+  function pushShoulderWidth(shW) {
+    shoulderWidthHist.push(shW);
+    if (shoulderWidthHist.length > SHOULDER_HIST_MAX) shoulderWidthHist.shift();
+  }
+
+  function dodgeDetectOpts(lm) {
+    const lSh = lm[11], rSh = lm[12];
+    if (!lSh || !rSh || !forwardRefs) return {};
+    return {
+      refShW: forwardRefs.shW,
+      shoulderWidthHist: shoulderWidthHist.slice(),
+    };
+  }
+
+  /**
+   * Plane Z in the same world space as the 3D skeleton (project uses wz - charPos.z).
+   * planeWorldZ = charPos.z + bodyForward + offset.
+   */
+  function syncPlaneFromDepths(depths) {
+    liveForwardDepths = depths;
+    planeBaseZ = depths ? depths.body : 0;
+    planeWorldZ = charPos.z + planeBaseZ + forwardPlaneOffset;
+  }
+
+  function getLimbPastPlaneChannels(depths) {
+    if (!depths) return [];
+    const threshold = planeBaseZ + forwardPlaneOffset;
+    const ch = [];
+    if (depths.lw >= threshold) ch.push('lw');
+    if (depths.rw >= threshold) ch.push('rw');
+    if (depths.la >= threshold) ch.push('la');
+    if (depths.ra >= threshold) ch.push('ra');
+    return ch;
   }
 
   function pushHist(hist, pt) {
@@ -502,16 +584,32 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     ctx.save();
     ctx.lineCap = 'round';
 
+    const hitColor = staminaHitColor();
+    const hitSpec  = staminaHitFlash ? STAMINA_HIT[staminaHitFlash.channel] : null;
+    const hitSet   = hitSpec ? new Set(hitSpec.joints) : null;
+    const pastSet  = new Set();
+    if (liveForwardDepths) {
+      getLimbPastPlaneChannels(liveForwardDepths).forEach(ch => {
+        const spec = STAMINA_HIT[ch];
+        if (spec) spec.joints.forEach(idx => pastSet.add(idx));
+      });
+    }
+
     // Bones
     ctx.strokeStyle = 'rgba(180,190,220,0.45)';
     ctx.lineWidth   = 2;
     MP_POSE_CONN.forEach(([a, b]) => {
       const pa = lm[a], pb = lm[b];
       if (!pa || !pb || dim(pa) || dim(pb)) return;
+      const segHit = hitSet && hitSet.has(a) && hitSet.has(b);
       ctx.beginPath();
       ctx.moveTo(sx(pa), sy(pa));
       ctx.lineTo(sx(pb), sy(pb));
+      ctx.strokeStyle = segHit && hitColor ? hitColor : 'rgba(180,190,220,0.45)';
+      ctx.lineWidth   = segHit ? 5 : 2;
+      ctx.globalAlpha = segHit ? 0.95 : 1;
       ctx.stroke();
+      ctx.globalAlpha = 1;
     });
 
     // Highlighted joints
@@ -528,11 +626,46 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     highlights.forEach(({ idx, color, r }) => {
       const p = lm[idx];
       if (!p || dim(p)) return;
+      const hit = isStaminaJointHit(idx);
+      const past = !hit && pastSet.has(idx);
+      const hitColor = staminaHitColor();
+      if (past) {
+        ctx.beginPath();
+        ctx.arc(sx(p), sy(p), r + 6, 0, 2 * Math.PI);
+        ctx.strokeStyle = 'rgba(251,191,36,0.85)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
       ctx.beginPath();
-      ctx.arc(sx(p), sy(p), r, 0, 2 * Math.PI);
-      ctx.fillStyle = color;
+      ctx.arc(sx(p), sy(p), hit ? r + 5 : r, 0, 2 * Math.PI);
+      ctx.fillStyle = hit && hitColor ? hitColor : color;
       ctx.fill();
+      if (hit && hitColor) {
+        ctx.beginPath();
+        ctx.arc(sx(p), sy(p), r + 10, 0, 2 * Math.PI);
+        ctx.strokeStyle = hitColor;
+        ctx.lineWidth = 3;
+        ctx.globalAlpha = Math.min(1, staminaHitFlash.frames / 8);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
     });
+
+    if (staminaHitFlash && staminaHitFlash.frames > 0) {
+      const spec = STAMINA_HIT[staminaHitFlash.channel];
+      const tipIdx = spec ? spec.joints[spec.joints.length - 1] : null;
+      const tip = tipIdx != null ? lm[tipIdx] : null;
+      const hitColor = staminaHitColor();
+      if (tip && !dim(tip) && hitColor) {
+        ctx.font = 'bold 14px system-ui,sans-serif';
+        ctx.fillStyle = hitColor;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        ctx.globalAlpha = Math.min(1, staminaHitFlash.frames / 10);
+        ctx.fillText(staminaHitFlash.label, sx(tip), sy(tip) - 14);
+        ctx.globalAlpha = 1;
+      }
+    }
 
     ctx.restore();
   }
@@ -605,6 +738,67 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
 
   // Key joint accent colours (highlighted in 3D view)
   const JOINT_ACCENT = { 15: '#38bdf8', 16: '#f87171', 27: '#4ade80', 28: '#a78bfa' };
+
+  function staminaHitColor() {
+    if (!staminaHitFlash) return null;
+    return STAMINA_KIND_COLOR[staminaHitFlash.kind] || '#ff4444';
+  }
+
+  function isStaminaBoneHit(boneId) {
+    if (!staminaHitFlash) return false;
+    const spec = STAMINA_HIT[staminaHitFlash.channel];
+    return spec && spec.bones.includes(boneId);
+  }
+
+  function isStaminaJointHit(idx) {
+    if (!staminaHitFlash) return false;
+    const spec = STAMINA_HIT[staminaHitFlash.channel];
+    return spec && spec.joints.includes(idx);
+  }
+
+  function tickStaminaHitFlash() {
+    if (!staminaHitFlash) return;
+    staminaHitFlash.frames--;
+    if (staminaHitFlash.frames <= 0) staminaHitFlash = null;
+  }
+
+  function triggerStaminaHit(ev, cost) {
+    const spec = STAMINA_HIT[ev.channel];
+    staminaHitFlash = {
+      channel: ev.channel,
+      kind: ev.kind,
+      label: spec ? spec.label : ev.channel.toUpperCase(),
+      frames: STAMINA_HIT_FRAMES,
+    };
+    lastStaminaHit = { ...ev, cost };
+    staminaHintFrames = 45;
+    const hint = document.getElementById('stamina-hint');
+    if (hint) {
+      const kind =
+        ev.kind === 'kick' ? 'KICK' : ev.kind === 'charge_punch' ? 'CHARGE' : 'PUNCH';
+      hint.textContent = `-${cost} ${kind} (${ev.limb})`;
+    }
+  }
+
+  function updateDebugPanel() {
+    const el = document.getElementById('debug-panel');
+    if (!el || !debugPanelOn) return;
+    const d = liveForwardDepths;
+    const plane = planeWorldZ;
+    const armed = staminaCrossState;
+    const lines = [
+      `planeZ ${planeWorldZ != null ? planeWorldZ.toFixed(3) : '—'}  (charZ ${charPos.z.toFixed(3)} + body ${planeBaseZ.toFixed(3)} + ${forwardPlaneOffset.toFixed(2)})`,
+      depthBaseline ? 'cal   ready' : `cal   ${depthCalibSamples.length}/${BD.DEPTH_BASELINE_FRAMES}`,
+      d
+        ? `depths  body ${d.body.toFixed(3)}  lw ${d.lw.toFixed(3)}  rw ${d.rw.toFixed(3)}  la ${d.la.toFixed(3)}  ra ${d.ra.toFixed(3)}`
+        : 'depths  —',
+      `armed   lw ${armed.lw}  rw ${armed.rw}  la ${armed.la}  ra ${armed.ra}  cd ${staminaCooldown}`,
+      lastStaminaHit
+        ? `last    ${lastStaminaHit.kind} ${lastStaminaHit.limb} (-${lastStaminaHit.cost})`
+        : 'last    —',
+    ];
+    el.innerHTML = lines.map(function (line) { return '<div>' + line + '</div>'; }).join('');
+  }
 
   // ── Position HUD (header chip) ────────────────────────────────────────────
   function updatePositionHUD() {
@@ -753,9 +947,9 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     ctx.textBaseline = 'bottom';
     ctx.fillText('BACK', MX, RY + RS - 3);
 
-    // Forward stamina plane (red) — follows hip depth + offset
-    const planeWorldZ = charPos.z + forwardPlaneOffset;
-    const planeY = MY - (planeWorldZ / RANGE) * (RS / 2);
+    // Forward stamina plane (red) — same Z as stamina detection
+    const radarPlaneZ = planeWorldZ;
+    const planeY = MY - (radarPlaneZ / RANGE) * (RS / 2);
     const dotYPre = MY - (charPos.z / RANGE) * (RS / 2);
     const zoneTop = Math.min(dotYPre, planeY);
     const zoneBot = Math.max(dotYPre, planeY);
@@ -802,7 +996,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
 
   /** Red vertical plane in 3D — hip world Z + forward offset (moves with character). */
   function drawForwardPlane3D(ctx, projectWorld, W) {
-    const planeZ = charPos.z + forwardPlaneOffset;
+    const planeZ = planeWorldZ;
     const yBot   = -0.58;
     const yTop   = 0.50;
     const xExt   = 1.15;
@@ -939,13 +1133,18 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     });
 
     // Bones
+    const hitColor = staminaHitColor();
+    const hitPulse = staminaHitFlash
+      ? 0.55 + 0.45 * Math.sin((STAMINA_HIT_FRAMES - staminaHitFlash.frames) * 0.55)
+      : 0;
     sorted.forEach(({ b }) => {
       const pa = pm[b.parent], pc = pm[b.child];
+      const hit = isStaminaBoneHit(b.id);
       ctx.beginPath();
       ctx.moveTo(pa.sx, pa.sy); ctx.lineTo(pc.sx, pc.sy);
-      ctx.strokeStyle = boneColor(b.id);
-      ctx.lineWidth   = 2.5;
-      ctx.globalAlpha = 0.82;
+      ctx.strokeStyle = hit && hitColor ? hitColor : boneColor(b.id);
+      ctx.lineWidth   = hit ? 5.5 : 2.5;
+      ctx.globalAlpha = hit ? Math.max(0.75, hitPulse) : 0.82;
       ctx.lineCap     = 'round';
       ctx.stroke();
       ctx.globalAlpha = 1;
@@ -957,9 +1156,18 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     jointIdxs.forEach(idx => {
       const p = pm[idx];
       if (!p) return;
-      ctx.beginPath(); ctx.arc(p.sx, p.sy, 5, 0, 2 * Math.PI);
-      ctx.fillStyle   = JOINT_ACCENT[idx] || 'rgba(91,156,246,0.85)';
-      ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.lineWidth = 1;
+      const hit = isStaminaJointHit(idx);
+      const color = hit && hitColor ? hitColor : (JOINT_ACCENT[idx] || 'rgba(91,156,246,0.85)');
+      const radius = hit ? 9 : 5;
+      if (hit && hitColor) {
+        ctx.beginPath(); ctx.arc(p.sx, p.sy, radius + 8, 0, 2 * Math.PI);
+        ctx.fillStyle = hitColor + '40';
+        ctx.fill();
+      }
+      ctx.beginPath(); ctx.arc(p.sx, p.sy, radius, 0, 2 * Math.PI);
+      ctx.fillStyle   = color;
+      ctx.strokeStyle = hit && hitColor ? hitColor : 'rgba(0,0,0,0.4)';
+      ctx.lineWidth   = hit ? 2.5 : 1;
       ctx.fill(); ctx.stroke();
     });
 
@@ -969,6 +1177,24 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
       ctx.beginPath(); ctx.arc(hp.sx, hp.sy, 14, 0, 2 * Math.PI);
       ctx.strokeStyle = '#7b879e'; ctx.lineWidth = 2; ctx.globalAlpha = 0.70;
       ctx.stroke(); ctx.globalAlpha = 1;
+    }
+
+    if (staminaHitFlash && staminaHitFlash.frames > 0 && hitColor) {
+      const alpha = Math.min(1, staminaHitFlash.frames / 8);
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.font = 'bold 15px system-ui,sans-serif';
+      ctx.fillStyle = hitColor;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      const kindLabel =
+        staminaHitFlash.kind === 'kick'
+          ? 'KICK'
+          : staminaHitFlash.kind === 'charge_punch'
+            ? 'CHARGE'
+            : 'PUNCH';
+      ctx.fillText(`${staminaHitFlash.label} · ${kindLabel}`, W / 2, H - 36);
+      ctx.restore();
     }
 
     // Action label overlay in 3D panel
@@ -1076,12 +1302,10 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     const lm = liveLm;
     if (biomechEnabled && !biomechCalibration) calibrateBiomechFromLive();
 
-    // Smooth character world position (apply multiplier to raw values)
-    const rawPos = computeCharPosition(lm);
-    if (rawPos) {
-      charPos.x += CHAR_SMOOTH * (rawPos.x * posMultiplier - charPos.x);
-      charPos.z += CHAR_SMOOTH * (rawPos.z * posMultiplier - charPos.z);
-    }
+    const shW = Math.abs(lm[11].x - lm[12].x);
+    pushShoulderWidth(shW);
+
+    const bodyPosRaw = liveWorldLm ? worldLmToBodyPos(liveWorldLm) : null;
 
     // Update per-limb ring buffers
     pushHist(histLW, { x: lm[15].x, y: lm[15].y });
@@ -1095,37 +1319,62 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     const swLA = M.computeSwingVector(histLA);
     const swRA = M.computeSwingVector(histRA);
 
-    // Stamina: only when forward depth crosses the red plane (not noisy swing spikes)
+    // Shoulder refs for dodge-back; depth baseline from 3D body space (matches 3D plane)
     if (!forwardRefs) forwardRefs = BD.captureForwardRefs(lm);
-    const currDepths = forwardRefs ? BD.computeForwardDepths(lm, forwardRefs) : null;
+    const currDepths = computeStaminaDepths(bodyPosRaw);
+    syncPlaneFromDepths(currDepths);
+
+    const rawPos = computeCharPosition(lm);
+    if (rawPos) {
+      charPos.x += CHAR_SMOOTH * (rawPos.x * posMultiplier - charPos.x);
+      if (currDepths) {
+        charPos.z += CHAR_SMOOTH * (currDepths.body * posMultiplier - charPos.z);
+        syncPlaneFromDepths(currDepths);
+      }
+    }
 
     if (staminaCooldown > 0) staminaCooldown--;
 
-    if (currDepths && prevForwardDepths && staminaCooldown <= 0) {
-      const off = BD.detectStaminaPlaneCross(
-        prevForwardDepths, currDepths, forwardPlaneOffset,
-        punchWindup, swLW, swRW, swLA, swRA
+    if (currDepths) {
+      BD.updateStaminaCrossArming(
+        staminaCrossState, currDepths, forwardPlaneOffset, BD.STAMINA_REARM_MARGIN
       );
-      if (off) {
-        const cost =
-          off.kind === 'kick'
-            ? STAM_COST_KICK
-            : off.kind === 'charge_punch'
-              ? STAM_COST_CHARGE_PUNCH
-              : STAM_COST_PUNCH;
-        stamina = Math.max(0, stamina - cost);
-        staminaCooldown = STAMINA_PLANE_COOLDOWN;
-      }
-    } else if (currDepths) {
       BD.tickPunchWindup(punchWindup, swLW, swRW);
-    }
-    if (currDepths) prevForwardDepths = { ...currDepths };
 
+      if (prevForwardDepths && staminaCooldown <= 0) {
+        const off = BD.detectStaminaPlaneCross(
+          prevForwardDepths, currDepths, forwardPlaneOffset,
+          punchWindup, swLW, swRW, swLA, swRA, staminaCrossState
+        );
+        if (off) {
+          const cost =
+            off.kind === 'kick'
+              ? STAM_COST_KICK
+              : off.kind === 'charge_punch'
+                ? STAM_COST_CHARGE_PUNCH
+                : STAM_COST_PUNCH;
+          stamina = Math.max(0, stamina - cost);
+          staminaCooldown = STAMINA_PLANE_COOLDOWN;
+          triggerStaminaHit(off, cost);
+        }
+      }
+      prevForwardDepths = { ...currDepths };
+    }
+
+    tickStaminaHitFlash();
+    if (staminaHintFrames > 0) {
+      staminaHintFrames--;
+      if (staminaHintFrames <= 0) {
+        const hint = document.getElementById('stamina-hint');
+        if (hint) hint.textContent = 'Cross plane cost';
+      }
+    }
     stamina = Math.min(STAMINA_MAX, stamina + STAM_REGEN_PER_FRAME);
     updateStaminaUI();
+    updateDebugPanel();
 
     // Detect only the four defensive actions used by the game loop.
-    const detected = BD.classifyBoxingAction(lm, swLW, swRW, swLA, swRA);
+    const detected = BD.classifyBoxingAction(lm, swLW, swRW, swLA, swRA, dodgeDetectOpts(lm));
     const isTrackedAction = CARD_ORDER.includes(detected.action);
 
     if (isTrackedAction) {
@@ -1159,9 +1408,9 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     updateActionCards(currentAction.action);
     updatePositionHUD();
 
-    // 3D view
-    if (liveWorldLm) {
-      const bodyPos = applyBiomechDepth(worldLmToBodyPos(liveWorldLm), lm);
+    // 3D view (same bodyPos as stamina depths; optional bio Z overlay on limbs)
+    if (bodyPosRaw) {
+      const bodyPos = applyBiomechDepth(bodyPosRaw, lm);
       draw3D(bodyPos);
     }
   }
@@ -1184,7 +1433,16 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
       punchWindup.r = 0;
       staminaCooldown = 0;
       forwardRefs = null;
+      depthBaseline = null;
+      depthCalibSamples.length = 0;
       prevForwardDepths = null;
+      staminaCrossState = BD.createStaminaCrossState();
+      staminaHitFlash = null;
+      lastStaminaHit = null;
+      liveForwardDepths = null;
+      shoulderWidthHist.length = 0;
+      planeBaseZ = 0;
+      planeWorldZ = forwardPlaneOffset;
       updateStaminaUI();
       updatePositionHUD();
       draw3D(worldLmToBodyPos(DEFAULT_WORLD_LM));
@@ -1303,6 +1561,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
       planeSlider.addEventListener('input', () => {
         forwardPlaneOffset = parseFloat(planeSlider.value);
         if (planeVal) planeVal.textContent = '+' + forwardPlaneOffset.toFixed(2) + 'm';
+        syncPlaneFromDepths(liveForwardDepths);
         if (liveWorldLm && liveLm) {
           draw3D(applyBiomechDepth(worldLmToBodyPos(liveWorldLm), liveLm));
         } else if (!cameraActive) {
@@ -1328,6 +1587,15 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
       });
     }
     updateBiomechUI();
+
+    window.addEventListener('keydown', e => {
+      if (e.key === 'd' || e.key === 'D') {
+        debugPanelOn = !debugPanelOn;
+        const panel = document.getElementById('debug-panel');
+        if (panel) panel.classList.toggle('on', debugPanelOn);
+        updateDebugPanel();
+      }
+    });
 
     window.addEventListener('resize', () => {
       if (!cameraActive) draw3D(worldLmToBodyPos(DEFAULT_WORLD_LM));
