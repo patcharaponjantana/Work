@@ -188,6 +188,18 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
 }
 .debug-panel.on{display:block}
 .debug-panel b{color:var(--text)}
+.wrist-debug{
+  position:absolute;left:10px;bottom:10px;right:10px;
+  padding:8px 10px;border-radius:6px;
+  background:rgba(0,0,0,0.72);border:1px solid rgba(91,156,246,0.35);
+  font-family:var(--mono);font-size:10px;line-height:1.45;
+  color:#cbd5e1;pointer-events:none;white-space:pre-wrap;
+  max-height:42%;overflow:auto;display:none;
+}
+.wrist-debug.on{display:block}
+.wrist-debug .wd-title{color:var(--accent);font-weight:700;margin-bottom:4px;font-size:9px;letter-spacing:.06em;text-transform:uppercase}
+.wrist-debug .wd-l{color:#38bdf8}
+.wrist-debug .wd-r{color:#f87171}
 </style>
 </head>
 <body>
@@ -229,6 +241,11 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
       <span>Click <strong>Start Camera</strong> to begin</span>
     </div>
     <div class="fps-label" id="fps-label"></div>
+    <div class="wrist-debug" id="wrist-debug" aria-live="polite">
+      <div class="wd-title">Raw MediaPipe wrists</div>
+      <div class="wd-l" id="wrist-debug-l">L wrist —</div>
+      <div class="wd-r" id="wrist-debug-r">R wrist —</div>
+    </div>
   </div>
 
   <!-- ── Right: 3D + action cards ── -->
@@ -786,12 +803,30 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     }
   }
 
+  function updateWristDebugUI() {
+    const lEl = document.getElementById('wrist-debug-l');
+    const rEl = document.getElementById('wrist-debug-r');
+    const wrap = document.getElementById('wrist-debug');
+    if (!lEl || !rEl) return;
+    if (!cameraActive || !liveLm) {
+      if (wrap) wrap.classList.remove('on');
+      lEl.textContent = 'L wrist —';
+      rEl.textContent = 'R wrist —';
+      return;
+    }
+    if (wrap) wrap.classList.add('on');
+    const raw = BD.formatWristRawDebug(liveLm, liveWorldLm);
+    lEl.textContent = raw.left;
+    rEl.textContent = raw.right;
+  }
+
   function updateDebugPanel() {
     const el = document.getElementById('debug-panel');
     if (!el || !debugPanelOn) return;
     const d = liveForwardDepths;
     const plane = planeWorldZ;
     const armed = staminaCrossState;
+    const wristRaw = liveLm ? BD.formatWristRawDebug(liveLm, liveWorldLm) : null;
     const lines = [
       `planeZ ${planeWorldZ != null ? planeWorldZ.toFixed(3) : '—'}  (charZ ${charPos.z.toFixed(3)} + body ${planeBaseZ.toFixed(3)} + ${forwardPlaneOffset.toFixed(2)} + wBase ${depthBaseline ? ((depthBaseline.lw + depthBaseline.rw) * 0.5).toFixed(3) : '—'})`,
       depthBaseline ? 'cal   ready' : `cal   ${depthCalibSamples.length}/${BD.DEPTH_BASELINE_FRAMES}`,
@@ -803,6 +838,11 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
         ? `last    ${lastStaminaHit.kind} ${lastStaminaHit.limb} (-${lastStaminaHit.cost})`
         : 'last    —',
     ];
+    if (wristRaw) {
+      lines.push('<b>wrists (raw)</b>');
+      lines.push(wristRaw.left.replace(/\n/g, '<br>'));
+      lines.push(wristRaw.right.replace(/\n/g, '<br>'));
+    }
     el.innerHTML = lines.map(function (line) { return '<div>' + line + '</div>'; }).join('');
   }
 
@@ -1389,6 +1429,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     }
     stamina = Math.min(STAMINA_MAX, stamina + STAM_REGEN_PER_FRAME);
     updateStaminaUI();
+    updateWristDebugUI();
     updateDebugPanel();
 
     // Detect only the four defensive actions used by the game loop.
@@ -1464,6 +1505,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
       planeWorldZ = forwardPlaneOffset;
       updateStaminaUI();
       updatePositionHUD();
+      updateWristDebugUI();
       draw3D(worldLmToBodyPos(DEFAULT_WORLD_LM));
       return;
     }

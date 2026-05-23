@@ -710,6 +710,53 @@ describe('estimateBiomechDepths', () => {
   });
 });
 
+// ─── formatLandmarkRaw / formatWristRawDebug ─────────────────────────────────
+
+describe('formatLandmarkRaw', () => {
+  it('returns em dash when landmark is null', () =>
+    assert.equal(B.formatLandmarkRaw(null, 'L'), 'L —'));
+
+  it('formats x, y, z and visibility', () => {
+    const s = B.formatLandmarkRaw({ x: 0.1, y: 0.2, z: -0.3, visibility: 0.9876 });
+    assert.match(s, /x=0\.1000 y=0\.2000 z=-0\.3000 vis=0\.988/);
+  });
+
+  it('defaults missing z to 0', () => {
+    const s = B.formatLandmarkRaw({ x: 0.5, y: 0.5 });
+    assert.match(s, /z=0\.0000/);
+    assert.doesNotMatch(s, /vis=/);
+  });
+});
+
+describe('formatWristRawDebug', () => {
+  it('includes image-space wrist indices 15 and 16', () => {
+    const lm = makeLm({
+      15: { x: 0.11, y: 0.22, z: -0.05, visibility: 0.9 },
+      16: { x: 0.88, y: 0.33, z: 0.01, visibility: 0.8 },
+    });
+    const out = B.formatWristRawDebug(lm);
+    assert.match(out.left, /\[15\].*x=0\.1100/);
+    assert.match(out.right, /\[16\].*x=0\.8800/);
+  });
+
+  it('appends world lines when worldLm is provided', () => {
+    const lm = makeLm();
+    const worldLm = makeLm({
+      15: { x: -0.4, y: -0.2, z: 0.1 },
+      16: { x: 0.4, y: -0.2, z: 0.1 },
+    });
+    const out = B.formatWristRawDebug(lm, worldLm);
+    assert.match(out.left, /world:.*x=-0\.4000/);
+    assert.match(out.right, /world:.*x=0\.4000/);
+  });
+
+  it('omits world lines when worldLm is omitted', () => {
+    const out = B.formatWristRawDebug(makeLm());
+    assert.doesNotMatch(out.left, /world:/);
+    assert.doesNotMatch(out.right, /world:/);
+  });
+});
+
 // ─── Exported constants ───────────────────────────────────────────────────────
 
 describe('exported constants', () => {

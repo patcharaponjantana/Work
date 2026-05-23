@@ -577,6 +577,57 @@
   }
 
   /**
+   * Format one MediaPipe landmark as a debug string (raw x, y, z, visibility).
+   *
+   * @param {{ x:number, y:number, z?:number, visibility?:number }|null|undefined} p
+   * @param {string} [label]
+   * @returns {string}
+   */
+  function formatLandmarkRaw(p, label) {
+    const prefix = label ? label + ' ' : '';
+    if (!p) return prefix + '—';
+    const z = p.z != null ? p.z : 0;
+    const vis =
+      p.visibility != null ? ` vis=${Number(p.visibility).toFixed(3)}` : '';
+    return (
+      prefix +
+      `x=${Number(p.x).toFixed(4)} y=${Number(p.y).toFixed(4)} z=${Number(z).toFixed(4)}` +
+      vis
+    );
+  }
+
+  /**
+   * Raw left/right wrist lines for UI debug (image + optional world landmarks).
+   *
+   * @param {Array<{x,y,z,visibility?}>|null} lm          poseLandmarks
+   * @param {Array<{x,y,z}>|null} [worldLm]               poseWorldLandmarks
+   * @returns {{ left: string, right: string }}
+   */
+  function formatWristRawDebug(lm, worldLm) {
+    const lImg = lm && lm[B.L_WRIST] ? lm[B.L_WRIST] : null;
+    const rImg = lm && lm[B.R_WRIST] ? lm[B.R_WRIST] : null;
+    const lWorld = worldLm && worldLm[B.L_WRIST] ? worldLm[B.L_WRIST] : null;
+    const rWorld = worldLm && worldLm[B.R_WRIST] ? worldLm[B.R_WRIST] : null;
+
+    function wristLine(side, img, world) {
+      const lines = [
+        `${side} wrist [${side === 'L' ? B.L_WRIST : B.R_WRIST}] img: ${formatLandmarkRaw(img)}`,
+      ];
+      if (worldLm) {
+        lines.push(
+          `${side} wrist world: ${formatLandmarkRaw(world)}`
+        );
+      }
+      return lines.join('\n');
+    }
+
+    return {
+      left:  wristLine('L', lImg, lWorld),
+      right: wristLine('R', rImg, rWorld),
+    };
+  }
+
+  /**
    * Estimate forward depth from foreshortening.
    *
    * If a limb has calibrated length L and currently appears as length l in 2D,
@@ -712,6 +763,8 @@
     estimateForeshortenedDepth,
     createBiomechCalibration,
     estimateBiomechDepths,
+    formatLandmarkRaw,
+    formatWristRawDebug,
     classifyBoxingAction,
   };
 
