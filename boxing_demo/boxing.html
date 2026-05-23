@@ -210,6 +210,8 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
 .wrist-debug .wd-wrist-title{margin-top:14px;padding-top:10px;border-top:1px solid rgba(148,163,184,0.25);color:var(--accent)}
 .wrist-debug .wd-hip{color:#4ade80;font-size:15px}
 .wrist-debug .wd-mid{color:#a78bfa;font-size:15px}
+.wrist-debug .wd-world{color:#fbbf24;font-size:15px}
+.wrist-debug .wd-img{color:#94a3b8;font-size:15px}
 </style>
 </head>
 <body>
@@ -252,10 +254,13 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     </div>
     <div class="fps-label" id="fps-label"></div>
     <div class="wrist-debug" id="wrist-debug" aria-live="polite" title="Scroll for wrist raw data">
-      <div class="wd-title wd-hip-title">Hips bodyPos [23][24]</div>
-      <div class="wd-hip" id="hip-debug-lr">L.x —  R.x —</div>
-      <div class="wd-hip" id="hip-debug-lz">L.z —  R.z —</div>
-      <div class="wd-mid" id="hip-debug-mid">mid —</div>
+      <div class="wd-title wd-hip-title">Hips [23] L · [24] R</div>
+      <div class="wd-world" id="hip-debug-world-lr">world L.x —  R.x —</div>
+      <div class="wd-world" id="hip-debug-world-lz">world L.z —  R.z —</div>
+      <div class="wd-img" id="hip-debug-img-lr">img  L.x —  R.x —</div>
+      <div class="wd-hip" id="hip-debug-body-lr">body L.x —  R.x —</div>
+      <div class="wd-hip" id="hip-debug-body-lz">body L.z —  R.z —</div>
+      <div class="wd-mid" id="hip-debug-mid">mid body x —  z —</div>
       <div class="wd-title wd-wrist-title">Raw MediaPipe wrists (scroll down)</div>
       <div class="wd-l" id="wrist-debug-l">L wrist —</div>
       <div class="wd-r" id="wrist-debug-r">R wrist —</div>
@@ -409,7 +414,9 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
   const charCalibSamples = [];
   let liveRawCharPos    = null;   // per-frame body-space delta before EMA
   let liveCharPosTarget = null;   // raw × posMultiplier (EMA target)
-  let liveHipBody       = null;   // L/R hip x,z in bodyPos (world negate)
+  let liveHipBody       = null;   // L/R hip x,z in bodyPos (after -x,-y,-z)
+  let liveHipWorld      = null;   // L/R hip from poseWorldLandmarks (raw metres)
+  let liveHipImg        = null;   // L/R hip x from poseLandmarks (raw 0–1 image)
   let prevForwardDepths = null;
   let liveForwardDepths = null;
   let smoothedDepths    = null;
@@ -809,25 +816,51 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
   }
 
   function updateHipDebugUI() {
-    const lrEl  = document.getElementById('hip-debug-lr');
-    const lzEl  = document.getElementById('hip-debug-lz');
-    const midEl = document.getElementById('hip-debug-mid');
-    if (!lrEl || !lzEl || !midEl) return;
-    if (!cameraActive || !liveHipBody) {
-      lrEl.textContent  = 'L.x —  R.x —';
-      lzEl.textContent  = 'L.z —  R.z —';
-      midEl.textContent = 'mid x —  z —';
+    const worldLr = document.getElementById('hip-debug-world-lr');
+    const worldLz = document.getElementById('hip-debug-world-lz');
+    const imgLr   = document.getElementById('hip-debug-img-lr');
+    const bodyLr  = document.getElementById('hip-debug-body-lr');
+    const bodyLz  = document.getElementById('hip-debug-body-lz');
+    const midEl   = document.getElementById('hip-debug-mid');
+    if (!worldLr || !bodyLr || !midEl) return;
+    if (!cameraActive) {
+      worldLr.textContent = 'world L.x —  R.x —';
+      if (worldLz) worldLz.textContent = 'world L.z —  R.z —';
+      if (imgLr) imgLr.textContent = 'img  L.x —  R.x —';
+      bodyLr.textContent = 'body L.x —  R.x —';
+      if (bodyLz) bodyLz.textContent = 'body L.z —  R.z —';
+      midEl.textContent = 'mid body x —  z —';
       return;
     }
-    const h = liveHipBody;
-    lrEl.textContent  = `L.x ${fmtSigned(h.lx)}  R.x ${fmtSigned(h.rx)}`;
-    lzEl.textContent  = `L.z ${fmtSigned(h.lz)}  R.z ${fmtSigned(h.rz)}`;
-    midEl.textContent = `mid x ${fmtSigned(h.mx)}  z ${fmtSigned(h.mz)}`;
+    if (liveHipWorld) {
+      const w = liveHipWorld;
+      worldLr.textContent = `world L.x ${fmtSigned(w.lx)}  R.x ${fmtSigned(w.rx)}`;
+      if (worldLz) worldLz.textContent = `world L.z ${fmtSigned(w.lz)}  R.z ${fmtSigned(w.rz)}`;
+    } else {
+      worldLr.textContent = 'world — (no poseWorldLandmarks)';
+      if (worldLz) worldLz.textContent = 'world L.z —  R.z —';
+    }
+    if (liveHipImg) {
+      const i = liveHipImg;
+      imgLr.textContent = `img  L.x ${fmtSigned(i.lx)}  R.x ${fmtSigned(i.rx)}`;
+    } else if (imgLr) {
+      imgLr.textContent = 'img  —';
+    }
+    if (liveHipBody) {
+      const h = liveHipBody;
+      bodyLr.textContent = `body L.x ${fmtSigned(h.lx)}  R.x ${fmtSigned(h.rx)} (= −world)`;
+      if (bodyLz) bodyLz.textContent = `body L.z ${fmtSigned(h.lz)}  R.z ${fmtSigned(h.rz)}`;
+      midEl.textContent = `mid body x ${fmtSigned(h.mx)}  z ${fmtSigned(h.mz)}`;
+    } else {
+      bodyLr.textContent = 'body —';
+      if (bodyLz) bodyLz.textContent = 'body L.z —  R.z —';
+      midEl.textContent = 'mid body x —  z —';
+    }
   }
 
   function syncLeftDebugPanel() {
     const wrap = document.getElementById('wrist-debug');
-    if (wrap) wrap.classList.toggle('on', cameraActive && !!(liveLm || liveHipBody));
+    if (wrap) wrap.classList.toggle('on', cameraActive && !!(liveLm || liveHipBody || liveHipWorld));
   }
 
   function updateWristDebugUI() {
@@ -879,8 +912,17 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     const pad = 12;
     const lineH = 20;
     const lines = [];
+    if (liveHipWorld) {
+      lines.push('world raw [23][24]');
+      lines.push(`  L.x ${fmtSigned(liveHipWorld.lx)}  R.x ${fmtSigned(liveHipWorld.rx)}`);
+      lines.push(`  L.z ${fmtSigned(liveHipWorld.lz)}  R.z ${fmtSigned(liveHipWorld.rz)}`);
+    }
+    if (liveHipImg) {
+      lines.push('img raw x (0–1)');
+      lines.push(`  L.x ${fmtSigned(liveHipImg.lx)}  R.x ${fmtSigned(liveHipImg.rx)}`);
+    }
     if (liveHipBody) {
-      lines.push('hips bodyPos [23][24]');
+      lines.push('body after negate');
       lines.push(`  L.x ${fmtSigned(liveHipBody.lx)}  R.x ${fmtSigned(liveHipBody.rx)}`);
       lines.push(`  L.z ${fmtSigned(liveHipBody.lz)}  R.z ${fmtSigned(liveHipBody.rz)}`);
       lines.push(`  mid x ${fmtSigned(liveHipBody.mx)}  z ${fmtSigned(liveHipBody.mz)}`);
@@ -1478,6 +1520,20 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
       const readyChar = BD.captureCharBaseline(charCalibSamples, bodyPosRaw);
       if (readyChar) charBaseline = readyChar;
     }
+    const wLH = liveWorldLm ? liveWorldLm[BD.B.L_HIP] : null;
+    const wRH = liveWorldLm ? liveWorldLm[BD.B.R_HIP] : null;
+    if (wLH && wRH) {
+      liveHipWorld = { lx: wLH.x, rx: wRH.x, lz: wLH.z, rz: wRH.z };
+    } else {
+      liveHipWorld = null;
+    }
+    const iLH = lm[BD.B.L_HIP];
+    const iRH = lm[BD.B.R_HIP];
+    if (iLH && iRH) {
+      liveHipImg = { lx: iLH.x, rx: iRH.x };
+    } else {
+      liveHipImg = null;
+    }
     const lHp = bodyPosRaw ? bodyPosRaw[BD.B.L_HIP] : null;
     const rHp = bodyPosRaw ? bodyPosRaw[BD.B.R_HIP] : null;
     if (lHp && rHp) {
@@ -1610,6 +1666,8 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
       liveRawCharPos = null;
       liveCharPosTarget = null;
       liveHipBody = null;
+      liveHipWorld = null;
+      liveHipImg = null;
       prevForwardDepths = null;
       smoothedDepths = null;
       staminaCrossState = BD.createStaminaCrossState();
