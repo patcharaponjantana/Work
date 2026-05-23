@@ -32,6 +32,9 @@
   /** Frames averaged when capturing standing depth baseline. */
   const DEPTH_BASELINE_FRAMES = 12;
 
+  /** Metres of charPos.x per unit of normalised image hip-mid offset from baseline. */
+  const CHAR_IMG_X_SCALE = 1.8;
+
   /** Maximum entries kept in each per-limb ring buffer. */
   const HIST_MAX = 24;
 
@@ -359,6 +362,33 @@
   }
 
   /**
+   * Shoulder span in normalised image space (poseLandmarks). Grows when stepping toward camera.
+   *
+   * @param {Array<{x:number,y:number,z?:number}>} lm
+   * @returns {number|null}
+   */
+  function computeShoulderWidth(lm) {
+    if (!lm || lm.length < 29) return null;
+    const lSh = lm[B.L_SHOULDER], rSh = lm[B.R_SHOULDER];
+    if (!lSh || !rSh) return null;
+    const shW = Math.abs(lSh.x - rSh.x);
+    return shW > 1e-4 ? shW : null;
+  }
+
+  /**
+   * Hip midpoint X in normalised image space (poseLandmarks).
+   *
+   * @param {Array<{x:number,y:number,z?:number}>} lm
+   * @returns {number|null}
+   */
+  function computeHipMidImageX(lm) {
+    if (!lm || lm.length < 29) return null;
+    const lHp = lm[B.L_HIP], rHp = lm[B.R_HIP];
+    if (!lHp || !rHp) return null;
+    return (lHp.x + rHp.x) * 0.5;
+  }
+
+  /**
    * Hip midpoint in body space (metres, after worldLmToBodyPos negate).
    *
    * @param {Record<number,{x:number,y:number,z:number}>} bodyPos
@@ -375,43 +405,46 @@
   }
 
   /**
-   * Collect hip-mid samples for {@link DEPTH_BASELINE_FRAMES} then return standing mean.
+   * Collect standing samples for {@link DEPTH_BASELINE_FRAMES} then return mean.
+   * Both axes from poseLandmarks: hip-mid X (lateral), shoulder width (forward/back).
    *
-   * @param {Array<{x:number,z:number}>} samples in-out
-   * @param {Record<number,{x,y,z}>} bodyPos
-   * @returns {{ hipX:number, hipZ:number }|null}
+   * @param {Array<{ imgMidX:number, shW:number }>} samples in-out
+   * @param {Array<{x,y,z}>} lm poseLandmarks
+   * @returns {{ hipImgX:number, refShW:number }|null}
    */
-  function captureCharBaseline(samples, bodyPos) {
-    if (!samples || !bodyPos || samples.length >= DEPTH_BASELINE_FRAMES) return null;
-    const mid = computeHipMid(bodyPos);
-    if (!mid) return null;
-    samples.push(mid);
+  function captureCharBaseline(samples, lm) {
+    if (!samples || !lm || samples.length >= DEPTH_BASELINE_FRAMES) return null;
+    const imgMidX = computeHipMidImageX(lm);
+    const shW = computeShoulderWidth(lm);
+    if (imgMidX == null || shW == null) return null;
+    samples.push({ imgMidX, shW });
     if (samples.length < DEPTH_BASELINE_FRAMES) return null;
     const n = samples.length;
-    let sumX = 0;
-    let sumZ = 0;
+    let sumImgX = 0;
+    let sumShW = 0;
     samples.forEach(s => {
-      sumX += s.x;
-      sumZ += s.z;
+      sumImgX += s.imgMidX;
+      sumShW += s.shW;
     });
-    return { hipX: sumX / n, hipZ: sumZ / n };
+    return { hipImgX: sumImgX / n, refShW: sumShW / n };
   }
 
   /**
-   * Floor translation from body-space hips (same frame as 3D skeleton).
+   * Floor translation from poseLandmarks: hip-mid X (lateral), shoulder width (forward/back).
    *
-   * @param {Record<number,{x,y,z}>} bodyPos
-   * @param {{ hipX:number, hipZ:number }} baseline
+   * @param {Array<{x,y,z}>} lm poseLandmarks
+   * @param {{ hipImgX:number, refShW:number }} baseline
    * @returns {{ x:number, y:number, z:number }|null}
    */
-  function computeCharPositionFromBodyPos(bodyPos, baseline) {
-    if (!bodyPos || !baseline) return null;
-    const mid = computeHipMid(bodyPos);
-    if (!mid) return null;
+  function computeCharPosition(lm, baseline) {
+    if (!lm || !baseline) return null;
+    const imgMidX = computeHipMidImageX(lm);
+    const shW = computeShoulderWidth(lm);
+    if (imgMidX == null || shW == null) return null;
     return {
-      x: mid.x - baseline.hipX,
+      x: -(imgMidX - baseline.hipImgX) * CHAR_IMG_X_SCALE,
       y: 0,
-      z: mid.z - baseline.hipZ,
+      z: forwardDepthFromRatio(shW, baseline.refShW),
     };
   }
 
@@ -810,9 +843,14 @@
     averageForwardDepths,
     captureDepthBaseline,
     DEPTH_BASELINE_FRAMES,
+    CHAR_IMG_X_SCALE,
+    computeShoulderWidth,
+    computeHipMidImageX,
     computeHipMid,
     captureCharBaseline,
-    computeCharPositionFromBodyPos,
+    computeCharPosition,
+    /** @deprecated use computeCharPosition */
+    computeCharPositionFromBodyPos: computeCharPosition,
     captureForwardRefs,
     detectForwardPlaneCross,
     detectRelativePlaneCross,

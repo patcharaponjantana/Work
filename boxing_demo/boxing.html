@@ -942,8 +942,8 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
       lines.push(charBaseline ? 'target —' : `cal ${charCalibSamples.length}/${BD.DEPTH_BASELINE_FRAMES}`);
     }
     if (charBaseline) {
-      lines.push(`baseline hipX ${charBaseline.hipX.toFixed(3)}`);
-      lines.push(`baseline hipZ ${charBaseline.hipZ.toFixed(3)}`);
+      lines.push(`baseline imgX ${charBaseline.hipImgX.toFixed(3)}`);
+      lines.push(`baseline shW ${charBaseline.refShW.toFixed(3)}`);
     }
     const boxH = lines.length * lineH + 14;
     const boxW = 300;
@@ -981,8 +981,8 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     const zEl = document.getElementById('pos-z');
     if (!xEl || !zEl) return;
 
-    const side = charPos.x;   // body-space hip mid X vs baseline; positive = display-right
-    const fwd  = charPos.z;   // body-space hip mid Z vs baseline; positive = toward camera
+    const side = charPos.x;   // image hip mid X vs baseline; positive = display-right
+    const fwd  = charPos.z;   // shoulder-width ratio vs baseline; positive = toward camera
 
     xEl.textContent = (side >= 0 ? '+' : '') + side.toFixed(2) + 'm';
     zEl.textContent = (fwd  >= 0 ? '+' : '') + fwd.toFixed(2)  + 'm';
@@ -1516,8 +1516,8 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
 
     syncPlaneFromDepths(smoothedDepths);
 
-    if (bodyPosRaw && !charBaseline) {
-      const readyChar = BD.captureCharBaseline(charCalibSamples, bodyPosRaw);
+    if (lm && !charBaseline) {
+      const readyChar = BD.captureCharBaseline(charCalibSamples, lm);
       if (readyChar) charBaseline = readyChar;
     }
     const wLH = liveWorldLm ? liveWorldLm[BD.B.L_HIP] : null;
@@ -1545,9 +1545,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     } else {
       liveHipBody = null;
     }
-    const rawPos = bodyPosRaw
-      ? BD.computeCharPositionFromBodyPos(bodyPosRaw, charBaseline)
-      : null;
+    const rawPos = lm ? BD.computeCharPosition(lm, charBaseline) : null;
     liveRawCharPos = rawPos;
     liveCharPosTarget = rawPos
       ? { x: rawPos.x * posMultiplier, z: rawPos.z * posMultiplier }

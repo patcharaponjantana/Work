@@ -407,7 +407,21 @@ describe('computeBodySpaceDepths', () => {
 
 // ─── char position from body space ───────────────────────────────────────────
 
-describe('char position from body space', () => {
+describe('char position from poseLandmarks', () => {
+  function mockLm() {
+    return Array.from({ length: 33 }, () => ({ x: 0.5, y: 0.5, z: 0 }));
+  }
+
+  function mockLmWithHipX(hipMidX, shW = 0.30) {
+    const lm = mockLm();
+    const half = shW * 0.5;
+    lm[11] = { x: hipMidX - half, y: 0.35, z: 0 };
+    lm[12] = { x: hipMidX + half, y: 0.35, z: 0 };
+    lm[23] = { x: hipMidX - 0.05, y: 0.6, z: 0 };
+    lm[24] = { x: hipMidX + 0.05, y: 0.6, z: 0 };
+    return lm;
+  }
+
   function mockBodyPos(overrides = {}) {
     const pos = {
       23: { x: -0.1, y: 0.02, z: 0 },
@@ -429,52 +443,71 @@ describe('char position from body space', () => {
     assert.ok(Math.abs(mid.z) < 1e-9);
   });
 
-  it('captureCharBaseline returns null until DEPTH_BASELINE_FRAMES samples', () => {
-    const samples = [];
-    for (let i = 0; i < B.DEPTH_BASELINE_FRAMES - 1; i++) {
-      assert.equal(B.captureCharBaseline(samples, mockBodyPos()), null);
-    }
-    const base = B.captureCharBaseline(samples, mockBodyPos());
-    assert.ok(base);
-    assert.ok(Math.abs(base.hipX) < 1e-9);
-    assert.ok(Math.abs(base.hipZ) < 1e-9);
+  it('computeHipMidImageX returns null without hips', () =>
+    assert.equal(B.computeHipMidImageX([]), null));
+
+  it('computeHipMidImageX averages hip landmark x', () => {
+    assert.ok(Math.abs(B.computeHipMidImageX(mockLmWithHipX(0.5)) - 0.5) < 1e-9);
   });
 
-  it('computeCharPositionFromBodyPos is zero at calibrated standing pose', () => {
+  it('computeShoulderWidth returns null without shoulders', () =>
+    assert.equal(B.computeShoulderWidth([]), null));
+
+  it('computeShoulderWidth measures shoulder span', () => {
+    assert.ok(Math.abs(B.computeShoulderWidth(mockLmWithHipX(0.5, 0.30)) - 0.30) < 1e-9);
+  });
+
+  it('captureCharBaseline returns null until DEPTH_BASELINE_FRAMES samples', () => {
+    const samples = [];
+    const lm = mockLmWithHipX(0.5);
+    for (let i = 0; i < B.DEPTH_BASELINE_FRAMES - 1; i++) {
+      assert.equal(B.captureCharBaseline(samples, lm), null);
+    }
+    const base = B.captureCharBaseline(samples, lm);
+    assert.ok(base);
+    assert.ok(Math.abs(base.hipImgX - 0.5) < 1e-9);
+    assert.ok(Math.abs(base.refShW - 0.30) < 1e-9);
+  });
+
+  it('computeCharPosition is zero at calibrated standing pose', () => {
     const samples = [];
     let baseline = null;
+    const lm = mockLmWithHipX(0.5);
     for (let i = 0; i < B.DEPTH_BASELINE_FRAMES; i++) {
-      baseline = B.captureCharBaseline(samples, mockBodyPos()) || baseline;
+      baseline = B.captureCharBaseline(samples, lm) || baseline;
     }
-    const pos = B.computeCharPositionFromBodyPos(mockBodyPos(), baseline);
-    assert.equal(pos.x, 0);
+    const pos = B.computeCharPosition(lm, baseline);
+    assert.ok(Math.abs(pos.x) < 1e-9);
     assert.equal(pos.y, 0);
-    assert.equal(pos.z, 0);
+    assert.ok(Math.abs(pos.z) < 1e-9);
   });
 
   it('returns null without baseline', () =>
-    assert.equal(B.computeCharPositionFromBodyPos(mockBodyPos(), null), null));
+    assert.equal(B.computeCharPosition(mockLmWithHipX(0.5), null), null));
 
-  it('positive charPos.z when hips move forward in body space', () => {
+  it('positive charPos.z when shoulders appear wider (closer)', () => {
     const samples = [];
     let baseline = null;
+    const lmStand = mockLmWithHipX(0.5, 0.30);
     for (let i = 0; i < B.DEPTH_BASELINE_FRAMES; i++) {
-      baseline = B.captureCharBaseline(samples, mockBodyPos()) || baseline;
+      baseline = B.captureCharBaseline(samples, lmStand) || baseline;
     }
-    const forward = mockBodyPos({ 23: { z: 0.2 }, 24: { z: 0.2 } });
-    const pos = B.computeCharPositionFromBodyPos(forward, baseline);
+    const lmClose = mockLmWithHipX(0.5, 0.36);
+    const pos = B.computeCharPosition(lmClose, baseline);
     assert.ok(pos.z > 0.15);
   });
 
-  it('non-zero charPos.x when hips shift sideways', () => {
+  it('non-zero charPos.x when image hip mid shifts sideways', () => {
     const samples = [];
     let baseline = null;
+    const lmStand = mockLmWithHipX(0.5);
     for (let i = 0; i < B.DEPTH_BASELINE_FRAMES; i++) {
-      baseline = B.captureCharBaseline(samples, mockBodyPos()) || baseline;
+      baseline = B.captureCharBaseline(samples, lmStand) || baseline;
     }
-    const shifted = mockBodyPos({ 23: { x: 0.0 }, 24: { x: 0.3 } });
-    const pos = B.computeCharPositionFromBodyPos(shifted, baseline);
-    assert.ok(Math.abs(pos.x) > 0.05);
+    const lmShift = mockLmWithHipX(0.62);
+    const pos = B.computeCharPosition(lmShift, baseline);
+    assert.ok(Math.abs(pos.x) > 0.15);
+    assert.ok(pos.x < 0);
   });
 });
 
