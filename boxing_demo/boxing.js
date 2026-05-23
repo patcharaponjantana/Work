@@ -359,6 +359,63 @@
   }
 
   /**
+   * Hip midpoint in body space (metres, after worldLmToBodyPos negate).
+   *
+   * @param {Record<number,{x:number,y:number,z:number}>} bodyPos
+   * @returns {{ x:number, z:number }|null}
+   */
+  function computeHipMid(bodyPos) {
+    if (!bodyPos) return null;
+    const lHp = bodyPos[B.L_HIP], rHp = bodyPos[B.R_HIP];
+    if (!lHp || !rHp) return null;
+    return {
+      x: (lHp.x + rHp.x) * 0.5,
+      z: (lHp.z + rHp.z) * 0.5,
+    };
+  }
+
+  /**
+   * Collect hip-mid samples for {@link DEPTH_BASELINE_FRAMES} then return standing mean.
+   *
+   * @param {Array<{x:number,z:number}>} samples in-out
+   * @param {Record<number,{x,y,z}>} bodyPos
+   * @returns {{ hipX:number, hipZ:number }|null}
+   */
+  function captureCharBaseline(samples, bodyPos) {
+    if (!samples || !bodyPos || samples.length >= DEPTH_BASELINE_FRAMES) return null;
+    const mid = computeHipMid(bodyPos);
+    if (!mid) return null;
+    samples.push(mid);
+    if (samples.length < DEPTH_BASELINE_FRAMES) return null;
+    const n = samples.length;
+    let sumX = 0;
+    let sumZ = 0;
+    samples.forEach(s => {
+      sumX += s.x;
+      sumZ += s.z;
+    });
+    return { hipX: sumX / n, hipZ: sumZ / n };
+  }
+
+  /**
+   * Floor translation from body-space hips (same frame as 3D skeleton).
+   *
+   * @param {Record<number,{x,y,z}>} bodyPos
+   * @param {{ hipX:number, hipZ:number }} baseline
+   * @returns {{ x:number, y:number, z:number }|null}
+   */
+  function computeCharPositionFromBodyPos(bodyPos, baseline) {
+    if (!bodyPos || !baseline) return null;
+    const mid = computeHipMid(bodyPos);
+    if (!mid) return null;
+    return {
+      x: mid.x - baseline.hipX,
+      y: 0,
+      z: mid.z - baseline.hipZ,
+    };
+  }
+
+  /**
    * Capture standing reference lengths for forward-depth / plane crossing.
    *
    * @param {Array<{x,y,z}>} lm
@@ -753,6 +810,9 @@
     averageForwardDepths,
     captureDepthBaseline,
     DEPTH_BASELINE_FRAMES,
+    computeHipMid,
+    captureCharBaseline,
+    computeCharPositionFromBodyPos,
     captureForwardRefs,
     detectForwardPlaneCross,
     detectRelativePlaneCross,

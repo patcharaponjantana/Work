@@ -55,15 +55,21 @@ A browser-only **boxing gesture demo** (no Unreal export yet) that:
 
 There are **three different “depth” concepts** in the codebase. Mixing them caused regressions.
 
-### A. Character position `charPos.z` (historical)
+### A. Character position `charPos` (body space — current)
 
-Originally from **shoulder width** in normalised image space:
+From **`poseWorldLandmarks`** after `worldLmToBodyPos` (same negated frame as the 3D skeleton). Hip midpoint minus a **12-frame standing baseline** (`captureCharBaseline` / `charBaseline`), parallel to depth calibration:
 
 ```text
-charPos.z = (shoulderWidth / REF_SHOULDER_W - 1) * 0.9   // REF_SHOULDER_W = 0.26
+midHip.x = (L_hip.x + R_hip.x) / 2
+midHip.z = (L_hip.z + R_hip.z) / 2
+charPos.x = midHip.x - baseline.hipX
+charPos.z = midHip.z - baseline.hipZ
+charPos.y = 0
 ```
 
-Used for: orbit pivot, floor grid scroll, radar dot, 3D projection offset.
+Smoothed in `boxing.html` with `CHAR_SMOOTH` and `posMultiplier`. Used for: orbit pivot, floor grid scroll, radar dot, 3D projection offset, and `planeWorldZ` (with `planeBaseZ`).
+
+**No longer used:** normalised-image `-(midHipX - 0.5) * 1.8` or shoulder-width `charPos.z` proxy.
 
 ### B. Foreshortening depths `computeForwardDepths(lm, forwardRefs)` (2D proxy)
 
@@ -94,10 +100,11 @@ Depths are **zeroed** against a **12-frame standing baseline** (`captureDepthBas
 **Plane for drawing:**
 
 ```text
-planeBaseZ  = depths.body (after baseline subtraction)
-charPos.z   = smoothed planeBaseZ * posMultiplier
-planeWorldZ = charPos.z + planeBaseZ + forwardPlaneOffset
+planeBaseZ  = smoothedDepths.body (after depth baseline subtraction)
+planeWorldZ = charPos.z + planeBaseZ + forwardPlaneOffset + wristBase
 ```
+
+`charPos.z` = whole-body hip forward/back; `planeBaseZ` = torso lean relative to hips (stamina detection space).
 
 3D wall uses `projectWorld({ z: planeWorldZ })`. Skeleton joints use `project({ z: joint.z + charPos.z })` where `project` does `lz = wz - charPos.z`.
 

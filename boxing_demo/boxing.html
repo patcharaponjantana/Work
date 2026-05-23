@@ -189,17 +189,27 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
 .debug-panel.on{display:block}
 .debug-panel b{color:var(--text)}
 .wrist-debug{
-  position:absolute;left:10px;bottom:10px;right:10px;
-  padding:8px 10px;border-radius:6px;
-  background:rgba(0,0,0,0.72);border:1px solid rgba(91,156,246,0.35);
-  font-family:var(--mono);font-size:10px;line-height:1.45;
-  color:#cbd5e1;pointer-events:none;white-space:pre-wrap;
-  max-height:42%;overflow:auto;display:none;
+  position:absolute;left:10px;bottom:10px;right:10px;z-index:5;
+  padding:12px 14px;border-radius:8px;
+  background:rgba(0,0,0,0.92);border:1px solid rgba(91,156,246,0.45);
+  font-family:var(--mono);font-size:15px;line-height:1.55;
+  color:#e2e8f0;pointer-events:auto;white-space:pre-wrap;
+  max-height:min(72%,420px);overflow-y:auto;overflow-x:hidden;display:none;
+  -webkit-overflow-scrolling:touch;
+  scrollbar-width:thin;
+  scrollbar-color:rgba(148,163,184,0.7) rgba(0,0,0,0.4);
 }
+.wrist-debug::-webkit-scrollbar{width:10px}
+.wrist-debug::-webkit-scrollbar-thumb{background:rgba(148,163,184,0.65);border-radius:5px}
+.wrist-debug::-webkit-scrollbar-track{background:rgba(0,0,0,0.35)}
 .wrist-debug.on{display:block}
-.wrist-debug .wd-title{color:var(--accent);font-weight:700;margin-bottom:4px;font-size:9px;letter-spacing:.06em;text-transform:uppercase}
-.wrist-debug .wd-l{color:#38bdf8}
-.wrist-debug .wd-r{color:#f87171}
+.wrist-debug .wd-title{color:var(--accent);font-weight:700;margin-bottom:6px;font-size:12px;letter-spacing:.06em;text-transform:uppercase}
+.wrist-debug .wd-l{color:#38bdf8;font-size:15px}
+.wrist-debug .wd-r{color:#f87171;font-size:15px}
+.wrist-debug .wd-hip-title{margin-top:0;color:#4ade80;font-size:13px}
+.wrist-debug .wd-wrist-title{margin-top:14px;padding-top:10px;border-top:1px solid rgba(148,163,184,0.25);color:var(--accent)}
+.wrist-debug .wd-hip{color:#4ade80;font-size:15px}
+.wrist-debug .wd-mid{color:#a78bfa;font-size:15px}
 </style>
 </head>
 <body>
@@ -241,8 +251,12 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
       <span>Click <strong>Start Camera</strong> to begin</span>
     </div>
     <div class="fps-label" id="fps-label"></div>
-    <div class="wrist-debug" id="wrist-debug" aria-live="polite">
-      <div class="wd-title">Raw MediaPipe wrists</div>
+    <div class="wrist-debug" id="wrist-debug" aria-live="polite" title="Scroll for wrist raw data">
+      <div class="wd-title wd-hip-title">Hips bodyPos [23][24]</div>
+      <div class="wd-hip" id="hip-debug-lr">L.x —  R.x —</div>
+      <div class="wd-hip" id="hip-debug-lz">L.z —  R.z —</div>
+      <div class="wd-mid" id="hip-debug-mid">mid —</div>
+      <div class="wd-title wd-wrist-title">Raw MediaPipe wrists (scroll down)</div>
       <div class="wd-l" id="wrist-debug-l">L wrist —</div>
       <div class="wd-r" id="wrist-debug-r">R wrist —</div>
     </div>
@@ -365,7 +379,6 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
   // Character world-space translation (smoothed, updated each frame)
   let charPos      = { x: 0, y: 0, z: 0 };
   let posMultiplier = 1;                    // user-adjustable scale factor
-  const REF_SHOULDER_W = 0.26;             // reference shoulder width in normalised coords
   const CHAR_SMOOTH    = 0.10;             // EMA factor for position — lower = smoother but laggier
 
   // Biomechanical Z (foreshortening) for wrists + ankles
@@ -392,6 +405,11 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
   let forwardRefs       = null;
   let depthBaseline     = null;
   const depthCalibSamples = [];
+  let charBaseline      = null;
+  const charCalibSamples = [];
+  let liveRawCharPos    = null;   // per-frame body-space delta before EMA
+  let liveCharPosTarget = null;   // raw × posMultiplier (EMA target)
+  let liveHipBody       = null;   // L/R hip x,z in bodyPos (world negate)
   let prevForwardDepths = null;
   let liveForwardDepths = null;
   let smoothedDepths    = null;
@@ -440,23 +458,6 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
   });
 
   // ── Helpers ───────────────────────────────────────────────────────────────
-
-  /**
-   * Derive the character's world-space translation from normalised image landmarks.
-   *  x — lateral (hip centre offset from frame centre, mirrored)
-   *  y — always 0 (avoids vertical drift from camera tilt)
-   *  z — depth proxy: larger shoulder-width → closer → positive Z (forward)
-   */
-  function computeCharPosition(lm) {
-    if (!lm || lm.length < 25) return null;
-    const midHipX = (lm[23].x + lm[24].x) / 2;
-    const shW = Math.abs(lm[11].x - lm[12].x);
-    return {
-      x: -(midHipX - 0.5) * 1.8,
-      y: 0,
-      z: (shW / REF_SHOULDER_W - 1) * 0.9,  // shoulder width → depth proxy; wider = closer = positive Z
-    };
-  }
 
   /** Depths for stamina + plane: world body space, zeroed at standing calibration. */
   function computeStaminaDepths(bodyPos) {
@@ -803,21 +804,48 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     }
   }
 
+  function fmtSigned(v) {
+    return (v >= 0 ? '+' : '') + v.toFixed(3);
+  }
+
+  function updateHipDebugUI() {
+    const lrEl  = document.getElementById('hip-debug-lr');
+    const lzEl  = document.getElementById('hip-debug-lz');
+    const midEl = document.getElementById('hip-debug-mid');
+    if (!lrEl || !lzEl || !midEl) return;
+    if (!cameraActive || !liveHipBody) {
+      lrEl.textContent  = 'L.x —  R.x —';
+      lzEl.textContent  = 'L.z —  R.z —';
+      midEl.textContent = 'mid x —  z —';
+      return;
+    }
+    const h = liveHipBody;
+    lrEl.textContent  = `L.x ${fmtSigned(h.lx)}  R.x ${fmtSigned(h.rx)}`;
+    lzEl.textContent  = `L.z ${fmtSigned(h.lz)}  R.z ${fmtSigned(h.rz)}`;
+    midEl.textContent = `mid x ${fmtSigned(h.mx)}  z ${fmtSigned(h.mz)}`;
+  }
+
+  function syncLeftDebugPanel() {
+    const wrap = document.getElementById('wrist-debug');
+    if (wrap) wrap.classList.toggle('on', cameraActive && !!(liveLm || liveHipBody));
+  }
+
   function updateWristDebugUI() {
     const lEl = document.getElementById('wrist-debug-l');
     const rEl = document.getElementById('wrist-debug-r');
-    const wrap = document.getElementById('wrist-debug');
     if (!lEl || !rEl) return;
     if (!cameraActive || !liveLm) {
-      if (wrap) wrap.classList.remove('on');
       lEl.textContent = 'L wrist —';
       rEl.textContent = 'R wrist —';
+      syncLeftDebugPanel();
+      updateHipDebugUI();
       return;
     }
-    if (wrap) wrap.classList.add('on');
     const raw = BD.formatWristRawDebug(liveLm, liveWorldLm);
     lEl.textContent = raw.left;
     rEl.textContent = raw.right;
+    syncLeftDebugPanel();
+    updateHipDebugUI();
   }
 
   function updateDebugPanel() {
@@ -846,14 +874,73 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     el.innerHTML = lines.map(function (line) { return '<div>' + line + '</div>'; }).join('');
   }
 
+  /** charPos debug readout on the 3D panel (top-left). */
+  function drawCharPosDebug(ctx, W, H) {
+    const pad = 12;
+    const lineH = 20;
+    const lines = [];
+    if (liveHipBody) {
+      lines.push('hips bodyPos [23][24]');
+      lines.push(`  L.x ${fmtSigned(liveHipBody.lx)}  R.x ${fmtSigned(liveHipBody.rx)}`);
+      lines.push(`  L.z ${fmtSigned(liveHipBody.lz)}  R.z ${fmtSigned(liveHipBody.rz)}`);
+      lines.push(`  mid x ${fmtSigned(liveHipBody.mx)}  z ${fmtSigned(liveHipBody.mz)}`);
+    }
+    lines.push(
+      'charPos (smoothed)',
+      `  x ${fmtSigned(charPos.x)} m`,
+      `  z ${fmtSigned(charPos.z)} m`
+    );
+    if (liveCharPosTarget) {
+      lines.push(`target x${posMultiplier} (EMA ${CHAR_SMOOTH})`);
+      lines.push(
+        `  x ${liveCharPosTarget.x >= 0 ? '+' : ''}${liveCharPosTarget.x.toFixed(3)} m`,
+        `  z ${liveCharPosTarget.z >= 0 ? '+' : ''}${liveCharPosTarget.z.toFixed(3)} m`
+      );
+    } else if (liveRawCharPos === null && cameraActive) {
+      lines.push(charBaseline ? 'target —' : `cal ${charCalibSamples.length}/${BD.DEPTH_BASELINE_FRAMES}`);
+    }
+    if (charBaseline) {
+      lines.push(`baseline hipX ${charBaseline.hipX.toFixed(3)}`);
+      lines.push(`baseline hipZ ${charBaseline.hipZ.toFixed(3)}`);
+    }
+    const boxH = lines.length * lineH + 14;
+    const boxW = 300;
+    ctx.save();
+    ctx.fillStyle = 'rgba(8,10,18,0.88)';
+    ctx.strokeStyle = 'rgba(56,189,248,0.5)';
+    ctx.lineWidth = 1.5;
+    ctx.fillRect(pad, pad, boxW, boxH);
+    ctx.strokeRect(pad, pad, boxW, boxH);
+    ctx.font = 'bold 15px ui-monospace, monospace';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    lines.forEach((line, i) => {
+      const isHeader =
+        line.startsWith('hips') || line.startsWith('charPos') ||
+        line.startsWith('target') || line.startsWith('baseline');
+      ctx.font =
+        isHeader
+          ? 'bold 13px ui-monospace, monospace'
+          : '15px ui-monospace, monospace';
+      ctx.fillStyle =
+        isHeader ? '#cbd5e1'
+          : line.startsWith('cal') ? '#fbbf24'
+          : line.startsWith('  mid') ? '#a78bfa'
+          : line.startsWith('  L.') || line.startsWith('  R.') ? '#4ade80'
+          : '#38bdf8';
+      ctx.fillText(line, pad + 10, pad + 8 + i * lineH);
+    });
+    ctx.restore();
+  }
+
   // ── Position HUD (header chip) ────────────────────────────────────────────
   function updatePositionHUD() {
     const xEl = document.getElementById('pos-x');
     const zEl = document.getElementById('pos-z');
     if (!xEl || !zEl) return;
 
-    const side = charPos.x;   // positive = display-right
-    const fwd  = charPos.z;  // positive = forward (toward camera)
+    const side = charPos.x;   // body-space hip mid X vs baseline; positive = display-right
+    const fwd  = charPos.z;   // body-space hip mid Z vs baseline; positive = toward camera
 
     xEl.textContent = (side >= 0 ? '+' : '') + side.toFixed(2) + 'm';
     zEl.textContent = (fwd  >= 0 ? '+' : '') + fwd.toFixed(2)  + 'm';
@@ -1262,6 +1349,9 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
     // Top-down position radar
     drawRadar(ctx, W, H);
 
+    // charPos debug (smoothed x/z + EMA target)
+    if (cameraActive) drawCharPosDebug(ctx, W, H);
+
     // XYZ axis gizmo
     drawAxisGizmo(ctx, W, H);
 
@@ -1384,10 +1474,31 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
 
     syncPlaneFromDepths(smoothedDepths);
 
-    const rawPos = computeCharPosition(lm);
+    if (bodyPosRaw && !charBaseline) {
+      const readyChar = BD.captureCharBaseline(charCalibSamples, bodyPosRaw);
+      if (readyChar) charBaseline = readyChar;
+    }
+    const lHp = bodyPosRaw ? bodyPosRaw[BD.B.L_HIP] : null;
+    const rHp = bodyPosRaw ? bodyPosRaw[BD.B.R_HIP] : null;
+    if (lHp && rHp) {
+      liveHipBody = {
+        lx: lHp.x, rx: rHp.x, lz: lHp.z, rz: rHp.z,
+        mx: (lHp.x + rHp.x) * 0.5,
+        mz: (lHp.z + rHp.z) * 0.5,
+      };
+    } else {
+      liveHipBody = null;
+    }
+    const rawPos = bodyPosRaw
+      ? BD.computeCharPositionFromBodyPos(bodyPosRaw, charBaseline)
+      : null;
+    liveRawCharPos = rawPos;
+    liveCharPosTarget = rawPos
+      ? { x: rawPos.x * posMultiplier, z: rawPos.z * posMultiplier }
+      : null;
     if (rawPos) {
-      charPos.x += CHAR_SMOOTH * (rawPos.x * posMultiplier - charPos.x);
-      charPos.z += CHAR_SMOOTH * (rawPos.z * posMultiplier - charPos.z);
+      charPos.x += CHAR_SMOOTH * (liveCharPosTarget.x - charPos.x);
+      charPos.z += CHAR_SMOOTH * (liveCharPosTarget.z - charPos.z);
       if (smoothedDepths) syncPlaneFromDepths(smoothedDepths);
     }
 
@@ -1494,6 +1605,11 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
       forwardRefs = null;
       depthBaseline = null;
       depthCalibSamples.length = 0;
+      charBaseline = null;
+      charCalibSamples.length = 0;
+      liveRawCharPos = null;
+      liveCharPosTarget = null;
+      liveHipBody = null;
       prevForwardDepths = null;
       smoothedDepths = null;
       staminaCrossState = BD.createStaminaCrossState();

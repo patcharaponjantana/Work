@@ -405,6 +405,79 @@ describe('computeBodySpaceDepths', () => {
   });
 });
 
+// ─── char position from body space ───────────────────────────────────────────
+
+describe('char position from body space', () => {
+  function mockBodyPos(overrides = {}) {
+    const pos = {
+      23: { x: -0.1, y: 0.02, z: 0 },
+      24: { x:  0.1, y: 0.02, z: 0 },
+    };
+    Object.entries(overrides).forEach(([k, v]) => {
+      const key = +k;
+      pos[key] = pos[key] ? { ...pos[key], ...v } : { x: 0, y: 0, z: 0, ...v };
+    });
+    return pos;
+  }
+
+  it('computeHipMid returns null without hips', () =>
+    assert.equal(B.computeHipMid({}), null));
+
+  it('computeHipMid averages hip x and z', () => {
+    const mid = B.computeHipMid(mockBodyPos());
+    assert.ok(Math.abs(mid.x) < 1e-9);
+    assert.ok(Math.abs(mid.z) < 1e-9);
+  });
+
+  it('captureCharBaseline returns null until DEPTH_BASELINE_FRAMES samples', () => {
+    const samples = [];
+    for (let i = 0; i < B.DEPTH_BASELINE_FRAMES - 1; i++) {
+      assert.equal(B.captureCharBaseline(samples, mockBodyPos()), null);
+    }
+    const base = B.captureCharBaseline(samples, mockBodyPos());
+    assert.ok(base);
+    assert.ok(Math.abs(base.hipX) < 1e-9);
+    assert.ok(Math.abs(base.hipZ) < 1e-9);
+  });
+
+  it('computeCharPositionFromBodyPos is zero at calibrated standing pose', () => {
+    const samples = [];
+    let baseline = null;
+    for (let i = 0; i < B.DEPTH_BASELINE_FRAMES; i++) {
+      baseline = B.captureCharBaseline(samples, mockBodyPos()) || baseline;
+    }
+    const pos = B.computeCharPositionFromBodyPos(mockBodyPos(), baseline);
+    assert.equal(pos.x, 0);
+    assert.equal(pos.y, 0);
+    assert.equal(pos.z, 0);
+  });
+
+  it('returns null without baseline', () =>
+    assert.equal(B.computeCharPositionFromBodyPos(mockBodyPos(), null), null));
+
+  it('positive charPos.z when hips move forward in body space', () => {
+    const samples = [];
+    let baseline = null;
+    for (let i = 0; i < B.DEPTH_BASELINE_FRAMES; i++) {
+      baseline = B.captureCharBaseline(samples, mockBodyPos()) || baseline;
+    }
+    const forward = mockBodyPos({ 23: { z: 0.2 }, 24: { z: 0.2 } });
+    const pos = B.computeCharPositionFromBodyPos(forward, baseline);
+    assert.ok(pos.z > 0.15);
+  });
+
+  it('non-zero charPos.x when hips shift sideways', () => {
+    const samples = [];
+    let baseline = null;
+    for (let i = 0; i < B.DEPTH_BASELINE_FRAMES; i++) {
+      baseline = B.captureCharBaseline(samples, mockBodyPos()) || baseline;
+    }
+    const shifted = mockBodyPos({ 23: { x: 0.0 }, 24: { x: 0.3 } });
+    const pos = B.computeCharPositionFromBodyPos(shifted, baseline);
+    assert.ok(Math.abs(pos.x) > 0.05);
+  });
+});
+
 // ─── detectBoxerCrouch ────────────────────────────────────────────────────────
 
 describe('detectBoxerCrouch', () => {
